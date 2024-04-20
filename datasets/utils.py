@@ -13,7 +13,15 @@ class VoxelizeCollate:
         self.ignore_label = ignore_label
 
     def __call__(self, batch):
-        (coordinates, features, labels, original_labels, inverse_maps, num_points, sequences) = (
+        (
+            coordinates,
+            features,
+            labels,
+            original_labels,
+            inverse_maps,
+            num_points,
+            sequences,
+        ) = (
             [],
             [],
             [],
@@ -28,7 +36,10 @@ class VoxelizeCollate:
             num_points.append(sample["num_points"])
             sequences.append(sample["sequence"])
             sample_c, sample_f, sample_l, inverse_map = voxelize(
-                sample["coordinates"], sample["features"], sample["labels"], self.voxel_size
+                sample["coordinates"],
+                sample["features"],
+                sample["labels"],
+                self.voxel_size,
             )
             inverse_maps.append(inverse_map)
             coordinates.append(sample_c)
@@ -44,7 +55,13 @@ class VoxelizeCollate:
 
         return (
             NoGpu(
-                coordinates, features, raw_coordinates, original_labels, inverse_maps, num_points, sequences
+                coordinates,
+                features,
+                raw_coordinates,
+                original_labels,
+                inverse_maps,
+                num_points,
+                sequences,
             ),
             target,
         )
@@ -71,7 +88,9 @@ def generate_target(features, labels, ignore_label):
 
     for feat, lb in zip(features, labels):
         raw_coords = feat[:, :3]
-        raw_coords = (raw_coords - raw_coords.min(0)[0]) / (raw_coords.max(0)[0] - raw_coords.min(0)[0])
+        raw_coords = (raw_coords - raw_coords.min(0)[0]) / (
+            raw_coords.max(0)[0] - raw_coords.min(0)[0]
+        )
         mask_labels = []
         binary_masks = []
         bboxs = []
@@ -101,7 +120,9 @@ def generate_target(features, labels, ignore_label):
             mask_labels = torch.stack(mask_labels)
             binary_masks = torch.stack(binary_masks)
             bboxs = torch.stack(bboxs)
-            target.append({"labels": mask_labels, "masks": binary_masks, "bboxs": bboxs})
+            target.append(
+                {"labels": mask_labels, "masks": binary_masks, "bboxs": bboxs}
+            )
 
     return target
 

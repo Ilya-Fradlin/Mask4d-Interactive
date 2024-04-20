@@ -98,14 +98,22 @@ class Mask4D(nn.Module):
         point_features = self.point_features_head(all_features[-1])
 
         with torch.no_grad():
-            coordinates = me.SparseTensor(features=raw_coordinates, coordinates=x.C, device=device)
+            coordinates = me.SparseTensor(
+                features=raw_coordinates, coordinates=x.C, device=device
+            )
         pos_encodings_pcd = self.get_pos_encs(coordinates)
 
         sampled_coords = []
         mins = []
         maxs = []
-        for coords, feats in zip(x.decomposed_coordinates, coordinates.decomposed_features):
-            fps_idx = furthest_point_sample(coords[None, ...].float(), self.num_queries).squeeze(0).long()
+        for coords, feats in zip(
+            x.decomposed_coordinates, coordinates.decomposed_features
+        ):
+            fps_idx = (
+                furthest_point_sample(coords[None, ...].float(), self.num_queries)
+                .squeeze(0)
+                .long()
+            )
             sampled_coords.append(feats[fps_idx, :3])
             mins.append(feats[:, :3].min(dim=0)[0])
             maxs.append(feats[:, :3].max(dim=0)[0])
@@ -139,17 +147,28 @@ class Mask4D(nn.Module):
                 if not is_eval:
                     curr_sample_size = min(curr_sample_size, self.sample_sizes[hlevel])
 
-                rand_idx, mask_idx = self.get_random_samples(pcd_sizes, curr_sample_size, device)
-
-                batched_feat = torch.stack([feat[idx, :] for feat, idx in zip(decomposed_feat, rand_idx)])
-
-                batched_attn = torch.stack([attn[idx, :] for attn, idx in zip(decomposed_attn, rand_idx)])
-
-                batched_pos_enc = torch.stack(
-                    [pos_enc[idx, :] for pos_enc, idx in zip(pos_encodings_pcd[hlevel], rand_idx)]
+                rand_idx, mask_idx = self.get_random_samples(
+                    pcd_sizes, curr_sample_size, device
                 )
 
-                batched_attn.permute((0, 2, 1))[batched_attn.sum(1) == curr_sample_size] = False
+                batched_feat = torch.stack(
+                    [feat[idx, :] for feat, idx in zip(decomposed_feat, rand_idx)]
+                )
+
+                batched_attn = torch.stack(
+                    [attn[idx, :] for attn, idx in zip(decomposed_attn, rand_idx)]
+                )
+
+                batched_pos_enc = torch.stack(
+                    [
+                        pos_enc[idx, :]
+                        for pos_enc, idx in zip(pos_encodings_pcd[hlevel], rand_idx)
+                    ]
+                )
+
+                batched_attn.permute((0, 2, 1))[
+                    batched_attn.sum(1) == curr_sample_size
+                ] = False
 
                 m = torch.stack(mask_idx)
                 batched_attn = torch.logical_or(batched_attn, m[..., None])
@@ -159,14 +178,19 @@ class Mask4D(nn.Module):
                 output = self.cross_attention[hlevel](
                     queries.permute((1, 0, 2)),
                     src_pcd,
-                    memory_mask=batched_attn.repeat_interleave(self.num_heads, dim=0).permute((0, 2, 1)),
+                    memory_mask=batched_attn.repeat_interleave(
+                        self.num_heads, dim=0
+                    ).permute((0, 2, 1)),
                     memory_key_padding_mask=None,  # here we do not apply masking on padded region
                     pos=batched_pos_enc.permute((1, 0, 2)),
                     query_pos=query_pos,
                 )
 
                 output = self.self_attention[hlevel](
-                    output, tgt_mask=None, tgt_key_padding_mask=None, query_pos=query_pos
+                    output,
+                    tgt_mask=None,
+                    tgt_key_padding_mask=None,
+                    query_pos=query_pos,
                 )
 
                 # FFN
@@ -176,7 +200,9 @@ class Mask4D(nn.Module):
                 predictions_bbox.append(outputs_bbox)
                 predictions_mask.append(outputs_mask)
 
-        output_class, outputs_bbox, outputs_mask = self.mask_module(queries, point_features)
+        output_class, outputs_bbox, outputs_mask = self.mask_module(
+            queries, point_features
+        )
         predictions_class.append(output_class)
         predictions_bbox.append(outputs_bbox)
         predictions_mask.append(outputs_mask)
@@ -185,7 +211,9 @@ class Mask4D(nn.Module):
             "pred_logits": predictions_class[-1],
             "pred_bboxs": predictions_bbox[-1],
             "pred_masks": predictions_mask[-1],
-            "aux_outputs": self._set_aux_loss(predictions_class, predictions_bbox, predictions_mask),
+            "aux_outputs": self._set_aux_loss(
+                predictions_class, predictions_bbox, predictions_mask
+            ),
         }
 
     def mask_module(self, query_feat, point_features, num_pooling_steps=0):
@@ -217,7 +245,12 @@ class Mask4D(nn.Module):
                 coordinate_map_key=attn_mask.coordinate_map_key,
             )
 
-            return outputs_class, outputs_bbox, outputs_mask.decomposed_features, attn_mask
+            return (
+                outputs_class,
+                outputs_bbox,
+                outputs_mask.decomposed_features,
+                attn_mask,
+            )
 
         return outputs_class, outputs_bbox, outputs_mask.decomposed_features
 
@@ -233,10 +266,12 @@ class Mask4D(nn.Module):
 
                 with autocast(enabled=False):
                     tmp = self.pos_enc(
-                        coords_batch[None, :, :3].float(), input_range=[scene_min[:, :3], scene_max[:, :3]]
+                        coords_batch[None, :, :3].float(),
+                        input_range=[scene_min[:, :3], scene_max[:, :3]],
                     )
                     tmp += self.temporal_pos_enc(
-                        coords_batch[None, :, 3].float(), input_range=[scene_min[:, 3:4], scene_max[:, 3:4]]
+                        coords_batch[None, :, 3].float(),
+                        input_range=[scene_min[:, 3:4], scene_max[:, 3:4]],
                     )
 
                 pos_encodings_pcd[-1].append(tmp.squeeze(0).permute((1, 0)))
@@ -275,5 +310,7 @@ class Mask4D(nn.Module):
         # as a dict having both a Tensor and a list.
         return [
             {"pred_logits": a, "pred_bboxs": b, "pred_masks": c}
-            for a, b, c in zip(outputs_class[:-1], outputs_bbox[:-1], outputs_seg_masks[:-1])
+            for a, b, c in zip(
+                outputs_class[:-1], outputs_bbox[:-1], outputs_seg_masks[:-1]
+            )
         ]

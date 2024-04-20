@@ -33,7 +33,9 @@ class PanopticSegmentation(pl.LightningModule):
             aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
         weight_dict.update(aux_weight_dict)
 
-        self.criterion = hydra.utils.instantiate(config.loss, matcher=matcher, weight_dict=weight_dict)
+        self.criterion = hydra.utils.instantiate(
+            config.loss, matcher=matcher, weight_dict=weight_dict
+        )
         # metrics
         self.class_evaluator = hydra.utils.instantiate(config.metric)
         self.last_seq = None
@@ -46,7 +48,9 @@ class PanopticSegmentation(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         data, target = batch
         raw_coordinates = data.raw_coordinates
-        data = ME.SparseTensor(coordinates=data.coordinates, features=data.features, device=self.device)
+        data = ME.SparseTensor(
+            coordinates=data.coordinates, features=data.features, device=self.device
+        )
 
         output = self.forward(data, raw_coordinates=raw_coordinates)
         losses = self.criterion(output, target)
@@ -87,7 +91,9 @@ class PanopticSegmentation(pl.LightningModule):
         num_points = data.num_points
         sequences = data.sequences
 
-        data = ME.SparseTensor(coordinates=data.coordinates, features=data.features, device=self.device)
+        data = ME.SparseTensor(
+            coordinates=data.coordinates, features=data.features, device=self.device
+        )
         output = self.forward(data, raw_coordinates=raw_coordinates, is_eval=True)
         losses = self.criterion(output, target)
 
@@ -104,7 +110,12 @@ class PanopticSegmentation(pl.LightningModule):
         offset_coords_idx = 0
 
         for logit, mask, map, label, n_point, seq in zip(
-            pred_logits, pred_masks, inverse_maps, original_labels, num_points, sequences
+            pred_logits,
+            pred_masks,
+            inverse_maps,
+            original_labels,
+            num_points,
+            sequences,
         ):
             if seq != self.last_seq:
                 self.last_seq = seq
@@ -120,14 +131,20 @@ class PanopticSegmentation(pl.LightningModule):
             ins_preds = np.argmax(confidence, axis=1)
             sem_preds = classes[ins_preds].numpy() + 1
             ins_preds += 1
-            ins_preds[np.isin(sem_preds, range(1, self.config.data.min_stuff_cls_id), invert=True)] = 0
+            ins_preds[
+                np.isin(
+                    sem_preds, range(1, self.config.data.min_stuff_cls_id), invert=True
+                )
+            ] = 0
             sem_labels = self.validation_dataset._remap_model_output(label[:, 0])
             ins_labels = label[:, 1] >> 16
 
             db_max_instance_id = self.config.model.num_queries
             if self.config.general.dbscan_eps is not None:
                 curr_coords_idx = mask.shape[0]
-                curr_coords = raw_coordinates[offset_coords_idx : curr_coords_idx + offset_coords_idx, :3]
+                curr_coords = raw_coordinates[
+                    offset_coords_idx : curr_coords_idx + offset_coords_idx, :3
+                ]
                 curr_coords = curr_coords[map].detach().cpu().numpy()
                 offset_coords_idx += curr_coords_idx
 
@@ -136,7 +153,11 @@ class PanopticSegmentation(pl.LightningModule):
                     if ins_id != 0:
                         instance_mask = ins_preds == ins_id
                         clusters = (
-                            DBSCAN(eps=self.config.general.dbscan_eps, min_samples=1, n_jobs=-1)
+                            DBSCAN(
+                                eps=self.config.general.dbscan_eps,
+                                min_samples=1,
+                                n_jobs=-1,
+                            )
                             .fit(curr_coords[instance_mask])
                             .labels_
                         )
@@ -152,14 +173,18 @@ class PanopticSegmentation(pl.LightningModule):
                 indices = range(n_point[i], n_point[i + 1])
                 if i == 0 and self.previous_instances is not None:
                     current_instances = ins_preds[indices]
-                    associations = associate_instances(self.previous_instances, current_instances)
+                    associations = associate_instances(
+                        self.previous_instances, current_instances
+                    )
                     for id in np.unique(ins_preds):
                         if associations.get(id) is None:
                             self.max_instance_id += 1
                             associations[id] = self.max_instance_id
                     ins_preds = np.vectorize(associations.__getitem__)(ins_preds)
                 else:
-                    self.class_evaluator.addBatch(sem_preds, ins_preds, sem_labels, ins_labels, indices, seq)
+                    self.class_evaluator.addBatch(
+                        sem_preds, ins_preds, sem_labels, ins_labels, indices, seq
+                    )
             if i > 0:
                 self.previous_instances = ins_preds[indices]
 
@@ -172,7 +197,9 @@ class PanopticSegmentation(pl.LightningModule):
         num_points = data.num_points
         sequences = data.sequences
 
-        data = ME.SparseTensor(coordinates=data.coordinates, features=data.features, device=self.device)
+        data = ME.SparseTensor(
+            coordinates=data.coordinates, features=data.features, device=self.device
+        )
         output = self.forward(data, raw_coordinates=raw_coordinates, is_eval=True)
 
         pred_logits = output["pred_logits"]
@@ -197,12 +224,18 @@ class PanopticSegmentation(pl.LightningModule):
             ins_preds = np.argmax(confidence, axis=1)
             sem_preds = classes[ins_preds].numpy() + 1
             ins_preds += 1
-            ins_preds[np.isin(sem_preds, range(1, self.config.data.min_stuff_cls_id), invert=True)] = 0
+            ins_preds[
+                np.isin(
+                    sem_preds, range(1, self.config.data.min_stuff_cls_id), invert=True
+                )
+            ] = 0
 
             db_max_instance_id = self.config.model.num_queries
             if self.config.general.dbscan_eps is not None:
                 curr_coords_idx = mask.shape[0]
-                curr_coords = raw_coordinates[offset_coords_idx : curr_coords_idx + offset_coords_idx, :3]
+                curr_coords = raw_coordinates[
+                    offset_coords_idx : curr_coords_idx + offset_coords_idx, :3
+                ]
                 curr_coords = curr_coords[map].detach().cpu().numpy()
                 offset_coords_idx += curr_coords_idx
 
@@ -211,7 +244,11 @@ class PanopticSegmentation(pl.LightningModule):
                     if ins_id != 0:
                         instance_mask = ins_preds == ins_id
                         clusters = (
-                            DBSCAN(eps=self.config.general.dbscan_eps, min_samples=1, n_jobs=-1)
+                            DBSCAN(
+                                eps=self.config.general.dbscan_eps,
+                                min_samples=1,
+                                n_jobs=-1,
+                            )
                             .fit(curr_coords[instance_mask])
                             .labels_
                         )
@@ -227,14 +264,21 @@ class PanopticSegmentation(pl.LightningModule):
                 indices = range(n_point[i], n_point[i + 1])
                 if i == 0 and self.previous_instances is not None:
                     current_instances = ins_preds[indices]
-                    associations = associate_instances(self.previous_instances, current_instances)
+                    associations = associate_instances(
+                        self.previous_instances, current_instances
+                    )
                     for id in np.unique(ins_preds):
                         if associations.get(id) is None:
                             self.max_instance_id += 1
                             associations[id] = self.max_instance_id
                     ins_preds = np.vectorize(associations.__getitem__)(ins_preds)
                 else:
-                    save_predictions(sem_preds[indices], ins_preds[indices], f"{seq:02}", f"{self.scene:06}")
+                    save_predictions(
+                        sem_preds[indices],
+                        ins_preds[indices],
+                        f"{seq:02}",
+                        f"{self.scene:06}",
+                    )
                     self.scene += 1
             if i > 0:
                 self.previous_instances = ins_preds[indices]
@@ -286,17 +330,25 @@ class PanopticSegmentation(pl.LightningModule):
         return {}
 
     def configure_optimizers(self):
-        optimizer = hydra.utils.instantiate(self.config.optimizer, params=self.parameters())
+        optimizer = hydra.utils.instantiate(
+            self.config.optimizer, params=self.parameters()
+        )
         if "steps_per_epoch" in self.config.scheduler.scheduler.keys():
-            self.config.scheduler.scheduler.steps_per_epoch = len(self.train_dataloader())
-        lr_scheduler = hydra.utils.instantiate(self.config.scheduler.scheduler, optimizer=optimizer)
+            self.config.scheduler.scheduler.steps_per_epoch = len(
+                self.train_dataloader()
+            )
+        lr_scheduler = hydra.utils.instantiate(
+            self.config.scheduler.scheduler, optimizer=optimizer
+        )
         scheduler_config = {"scheduler": lr_scheduler}
         scheduler_config.update(self.config.scheduler.pytorch_lightning_params)
         return [optimizer], [scheduler_config]
 
     def prepare_data(self):
         self.train_dataset = hydra.utils.instantiate(self.config.data.train_dataset)
-        self.validation_dataset = hydra.utils.instantiate(self.config.data.validation_dataset)
+        self.validation_dataset = hydra.utils.instantiate(
+            self.config.data.validation_dataset
+        )
         self.test_dataset = hydra.utils.instantiate(self.config.data.test_dataset)
 
     def train_dataloader(self):

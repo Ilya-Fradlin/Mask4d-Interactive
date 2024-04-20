@@ -30,7 +30,9 @@ def get_parameters(cfg: DictConfig):
     for log in cfg.logging:
         print(log)
         loggers.append(hydra.utils.instantiate(log))
-        loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
+        loggers[-1].log_hyperparams(
+            flatten_dict(OmegaConf.to_container(cfg, resolve=True))
+        )
 
     model = PanopticSegmentation(cfg)
 

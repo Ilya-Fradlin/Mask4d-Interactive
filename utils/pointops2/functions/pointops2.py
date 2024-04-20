@@ -41,7 +41,9 @@ class KNNQuery(Function):
         m = new_xyz.shape[0]
         idx = torch.cuda.IntTensor(m, nsample).zero_()
         dist2 = torch.cuda.FloatTensor(m, nsample).zero_()
-        pointops_cuda.knnquery_cuda(m, nsample, xyz, new_xyz, offset, new_offset, idx, dist2)
+        pointops_cuda.knnquery_cuda(
+            m, nsample, xyz, new_xyz, offset, new_offset, idx, dist2
+        )
         return idx, torch.sqrt(dist2)
 
 
@@ -73,7 +75,9 @@ class Grouping(Function):
         (idx,) = ctx.saved_tensors
         m, nsample, c = grad_output.shape
         grad_input = torch.cuda.FloatTensor(n, c).zero_()
-        pointops_cuda.grouping_backward_cuda(m, nsample, c, grad_output, idx, grad_input)
+        pointops_cuda.grouping_backward_cuda(
+            m, nsample, c, grad_output, idx, grad_input
+        )
         return grad_input, None
 
 
@@ -115,7 +119,9 @@ class Subtraction(Function):
         n, c = input1.shape
         nsample = idx.shape[-1]
         output = torch.cuda.FloatTensor(n, nsample, c).zero_()
-        pointops_cuda.subtraction_forward_cuda(n, nsample, c, input1, input2, idx, output)
+        pointops_cuda.subtraction_forward_cuda(
+            n, nsample, c, input1, input2, idx, output
+        )
         ctx.save_for_backward(idx)
         return output
 
@@ -129,7 +135,9 @@ class Subtraction(Function):
         n, nsample, c = grad_output.shape
         grad_input1 = torch.cuda.FloatTensor(n, c).zero_()
         grad_input2 = torch.cuda.FloatTensor(n, c).zero_()
-        pointops_cuda.subtraction_backward_cuda(n, nsample, c, idx, grad_output, grad_input1, grad_input2)
+        pointops_cuda.subtraction_backward_cuda(
+            n, nsample, c, idx, grad_output, grad_input1, grad_input2
+        )
         return grad_input1, grad_input2, None
 
 
@@ -143,11 +151,17 @@ class Aggregation(Function):
         input: input: (n, c), position: (n, nsample, c), weight : (n, nsample, c'), idx: (n, nsample)
         output: (n, c)
         """
-        assert input.is_contiguous() and position.is_contiguous() and weight.is_contiguous()
+        assert (
+            input.is_contiguous()
+            and position.is_contiguous()
+            and weight.is_contiguous()
+        )
         n, nsample, c = position.shape
         w_c = weight.shape[-1]
         output = torch.cuda.FloatTensor(n, c).zero_()
-        pointops_cuda.aggregation_forward_cuda(n, nsample, c, w_c, input, position, weight, idx, output)
+        pointops_cuda.aggregation_forward_cuda(
+            n, nsample, c, w_c, input, position, weight, idx, output
+        )
         ctx.save_for_backward(input, position, weight, idx)
         return output
 
@@ -230,7 +244,9 @@ class Interpolation(Function):
         idx, weight = ctx.saved_tensors
         n, c = grad_output.shape
         grad_input = torch.cuda.FloatTensor(m, c).zero_()
-        pointops_cuda.interpolation_backward_cuda(n, c, k, grad_output, idx, weight, grad_input)
+        pointops_cuda.interpolation_backward_cuda(
+            n, c, k, grad_output, idx, weight, grad_input
+        )
         return None, None, grad_input, None, None, None
 
 

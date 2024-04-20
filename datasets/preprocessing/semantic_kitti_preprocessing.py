@@ -40,7 +40,9 @@ class SemanticKittiPreprocessing:
                 filepaths = list(self.data_dir.glob(f"*/{scene:02}/velodyne/*bin"))
                 filepaths = [str(file) for file in filepaths]
                 self.files[mode].extend(natsorted(filepaths))
-                calibration = parse_calibration(Path(filepaths[0]).parent.parent / "calib.txt")
+                calibration = parse_calibration(
+                    Path(filepaths[0]).parent.parent / "calib.txt"
+                )
                 self.pose[mode].update(
                     {
                         scene: parse_poses(
@@ -69,7 +71,9 @@ class SemanticKittiPreprocessing:
                 panoptic_label = instance["panoptic_label"]
                 unique_identifier = f"{scene}_{panoptic_label}"
                 if unique_identifier in instance_database:
-                    instance_database[unique_identifier]["filepaths"].append(instance["instance_filepath"])
+                    instance_database[unique_identifier]["filepaths"].append(
+                        instance["instance_filepath"]
+                    )
                 else:
                     instance_database[unique_identifier] = {
                         "semantic_label": instance["semantic_label"],
@@ -77,7 +81,9 @@ class SemanticKittiPreprocessing:
                     }
         self.save_database(list(instance_database.values()), "train_instances")
 
-        validation_database = self._load_yaml(self.save_dir / "validation_database.yaml")
+        validation_database = self._load_yaml(
+            self.save_dir / "validation_database.yaml"
+        )
         for sample in tqdm(validation_database):
             instances = self.extract_instance_from_file(sample)
             for instance in instances:
@@ -85,7 +91,9 @@ class SemanticKittiPreprocessing:
                 panoptic_label = instance["panoptic_label"]
                 unique_identifier = f"{scene}_{panoptic_label}"
                 if unique_identifier in instance_database:
-                    instance_database[unique_identifier]["filepaths"].append(instance["instance_filepath"])
+                    instance_database[unique_identifier]["filepaths"].append(
+                        instance["instance_filepath"]
+                    )
                 else:
                     instance_database[unique_identifier] = {
                         "semantic_label": instance["semantic_label"],
@@ -98,11 +106,15 @@ class SemanticKittiPreprocessing:
         pose = np.array(sample["pose"]).T
         points[:, :3] = points[:, :3] @ pose[:3, :3] + pose[3, :3]
         label = np.fromfile(sample["label_filepath"], dtype=np.uint32)
-        scene, sub_scene = re.search(r"(\d{2}).*(\d{6})", sample["filepath"]).group(1, 2)
+        scene, sub_scene = re.search(r"(\d{2}).*(\d{6})", sample["filepath"]).group(
+            1, 2
+        )
         file_instances = []
         for panoptic_label in np.unique(label):
             semantic_label = panoptic_label & 0xFFFF
-            semantic_label = np.vectorize(self.config["learning_map"].__getitem__)(semantic_label)
+            semantic_label = np.vectorize(self.config["learning_map"].__getitem__)(
+                semantic_label
+            )
             if np.isin(semantic_label, range(1, 9)):
                 instance_mask = label == panoptic_label
                 instance_points = points[instance_mask, :]
@@ -184,7 +196,9 @@ class SemanticKittiPreprocessing:
 
         if mode in ["train", "validation"]:
             # getting label info
-            label_filepath = filepath.replace("velodyne", "labels").replace("bin", "label")
+            label_filepath = filepath.replace("velodyne", "labels").replace(
+                "bin", "label"
+            )
             sample["label_filepath"] = label_filepath
         return sample
 

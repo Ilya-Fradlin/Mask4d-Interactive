@@ -3,19 +3,27 @@ import math
 
 
 class Panoptic4DEval:
-    def __init__(self, n_classes, min_stuff_cls_id, ignore=0, offset=2**32, min_points=50):
+    def __init__(
+        self, n_classes, min_stuff_cls_id, ignore=0, offset=2**32, min_points=50
+    ):
         self.n_classes = n_classes + 1
         self.ignore = ignore
-        self.include = np.array([n for n in range(self.n_classes) if n != self.ignore], dtype=np.int64)
+        self.include = np.array(
+            [n for n in range(self.n_classes) if n != self.ignore], dtype=np.int64
+        )
         self.min_stuff_cls_id = min_stuff_cls_id
         self.reset()
         self.offset = offset  # largest number of instances in a given scan
-        self.min_points = min_points  # smallest number of points to consider instances in gt
+        self.min_points = (
+            min_points  # smallest number of points to consider instances in gt
+        )
         self.eps = 1e-15
 
     def reset(self):
         # iou stuff
-        self.px_iou_conf_matrix = np.zeros((self.n_classes, self.n_classes), dtype=np.int64)
+        self.px_iou_conf_matrix = np.zeros(
+            (self.n_classes, self.n_classes), dtype=np.int64
+        )
         self.sequences = []
         self.preds = {}
         self.gts = {}
@@ -43,7 +51,9 @@ class Panoptic4DEval:
         intersection = tp
         union = tp + fp + fn
         union = np.maximum(union, self.eps)
-        iou = intersection[self.include].astype(np.double) / union[self.include].astype(np.double)
+        iou = intersection[self.include].astype(np.double) / union[self.include].astype(
+            np.double
+        )
         iou_mean = iou.mean()
 
         return iou_mean, iou
@@ -85,14 +95,23 @@ class Panoptic4DEval:
             y_inst_in_cl = y_inst_row * y_inst_in_cl_mask.astype(np.int64)
 
             # generate the areas for each unique instance gt_np (i.e., set2)
-            unique_gt, counts_gt = np.unique(y_inst_in_cl[y_inst_in_cl > 0], return_counts=True)
-            self.update_dict_stat(
-                cl_gts, unique_gt[counts_gt > self.min_points], counts_gt[counts_gt > self.min_points]
+            unique_gt, counts_gt = np.unique(
+                y_inst_in_cl[y_inst_in_cl > 0], return_counts=True
             )
-            y_inst_in_cl[np.isin(y_inst_in_cl, unique_gt[counts_gt <= self.min_points])] = 0
+            self.update_dict_stat(
+                cl_gts,
+                unique_gt[counts_gt > self.min_points],
+                counts_gt[counts_gt > self.min_points],
+            )
+            y_inst_in_cl[
+                np.isin(y_inst_in_cl, unique_gt[counts_gt <= self.min_points])
+            ] = 0
 
             # generate intersection using offset
-            offset_combo = x_inst_row[y_inst_in_cl > 0] + self.offset * y_inst_in_cl[y_inst_in_cl > 0]
+            offset_combo = (
+                x_inst_row[y_inst_in_cl > 0]
+                + self.offset * y_inst_in_cl[y_inst_in_cl > 0]
+            )
             unique_combo, counts_combo = np.unique(offset_combo, return_counts=True)
 
             self.update_dict_stat(cl_intersects, unique_combo, counts_combo)
@@ -115,7 +134,9 @@ class Panoptic4DEval:
                         TPA_key = pr_id + self.offset * gt_id
                         if TPA_key in cl_intersects:
                             TPA_ovr = cl_intersects[TPA_key]
-                            inner_sum_iou += TPA_ovr * (TPA_ovr / (gt_size + pr_size - TPA_ovr))
+                            inner_sum_iou += TPA_ovr * (
+                                TPA_ovr / (gt_size + pr_size - TPA_ovr)
+                            )
                     outer_sum_iou += float(inner_sum_iou) / float(gt_size)
                 pan_aq[cl] += outer_sum_iou
                 pan_aq_ovr += outer_sum_iou
@@ -128,7 +149,9 @@ class Panoptic4DEval:
         PQ4D = math.sqrt(AQ_overall * iou_mean)
         return PQ4D, AQ_overall, AQ[self.include], iou_mean, iou
 
-    def addBatch(self, x_sem, x_inst, y_sem, y_inst, indices, seq):  # x=preds, y=targets
+    def addBatch(
+        self, x_sem, x_inst, y_sem, y_inst, indices, seq
+    ):  # x=preds, y=targets
         x_sem = x_sem[indices]
         x_inst = x_inst[indices]
         y_sem = y_sem[indices]

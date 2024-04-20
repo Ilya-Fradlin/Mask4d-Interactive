@@ -1,6 +1,12 @@
 import torch
 import pointops
-from torch_scatter import scatter_max, scatter_mean, scatter_add, scatter_min, scatter_sum
+from torch_scatter import (
+    scatter_max,
+    scatter_mean,
+    scatter_add,
+    scatter_min,
+    scatter_sum,
+)
 
 torch.manual_seed(1)
 
@@ -38,7 +44,9 @@ print("value.is_contiguous(): ", value.is_contiguous())
 print("index_0.is_contiguous(): ", index_0.is_contiguous())
 print("index_1.is_contiguous(): ", index_1.is_contiguous())
 
-x_v2 = pointops.attention_step2(softmax_attn_flat.float(), value.float(), index_0.int(), index_1.int())
+x_v2 = pointops.attention_step2(
+    softmax_attn_flat.float(), value.float(), index_0.int(), index_1.int()
+)
 x_v2 = x_v2.view(N, C)
 loss = x_v2.sum()
 loss.backward()

@@ -1,6 +1,12 @@
 import torch
 import pointops
-from torch_scatter import scatter_max, scatter_mean, scatter_add, scatter_min, scatter_sum
+from torch_scatter import (
+    scatter_max,
+    scatter_mean,
+    scatter_add,
+    scatter_min,
+    scatter_sum,
+)
 
 torch.manual_seed(1)
 
@@ -42,7 +48,9 @@ index_q_offsets = index_q_counts.cumsum(dim=-1)  # [N]
 
 print("v1 index_q_offsets.shape: ", index_q_offsets.shape)
 
-index_q_offsets = torch.cat([torch.zeros(1, dtype=torch.long).cuda(), index_q_offsets], 0)  # [N+1]
+index_q_offsets = torch.cat(
+    [torch.zeros(1, dtype=torch.long).cuda(), index_q_offsets], 0
+)  # [N+1]
 
 # print("index_q[:100]: ", index_q[:100])
 print("n_max: ", n_max)
@@ -76,7 +84,14 @@ loss.backward()
 # print("index_k.is_contiguous(): ", index_k.is_contiguous())
 
 output_v2 = pointops.dot_prod_with_idx_v3(
-    query, index_q_offsets.int(), n_max, key, index_k.int(), table_q, table_k, rel_index.int()
+    query,
+    index_q_offsets.int(),
+    n_max,
+    key,
+    index_k.int(),
+    table_q,
+    table_k,
+    rel_index.int(),
 )
 # loss = output_v2.mean()
 # loss.backward()

@@ -132,7 +132,9 @@ class Res16UNetBase(ResNetBase):
             conv_type=self.NON_BLOCK_CONV_TYPE,
             D=D,
         )
-        self.bntr4 = get_norm(self.NORM_TYPE, self.PLANES[4], D, bn_momentum=bn_momentum)
+        self.bntr4 = get_norm(
+            self.NORM_TYPE, self.PLANES[4], D, bn_momentum=bn_momentum
+        )
 
         self.inplanes = self.PLANES[4] + self.PLANES[2] * self.BLOCK.expansion
         self.block5 = self._make_layer(
@@ -153,7 +155,9 @@ class Res16UNetBase(ResNetBase):
             conv_type=self.NON_BLOCK_CONV_TYPE,
             D=D,
         )
-        self.bntr5 = get_norm(self.NORM_TYPE, self.PLANES[5], D, bn_momentum=bn_momentum)
+        self.bntr5 = get_norm(
+            self.NORM_TYPE, self.PLANES[5], D, bn_momentum=bn_momentum
+        )
 
         self.inplanes = self.PLANES[5] + self.PLANES[1] * self.BLOCK.expansion
         self.block6 = self._make_layer(
@@ -174,7 +178,9 @@ class Res16UNetBase(ResNetBase):
             conv_type=self.NON_BLOCK_CONV_TYPE,
             D=D,
         )
-        self.bntr6 = get_norm(self.NORM_TYPE, self.PLANES[6], D, bn_momentum=bn_momentum)
+        self.bntr6 = get_norm(
+            self.NORM_TYPE, self.PLANES[6], D, bn_momentum=bn_momentum
+        )
 
         self.inplanes = self.PLANES[6] + self.PLANES[0] * self.BLOCK.expansion
         self.block7 = self._make_layer(
@@ -195,7 +201,9 @@ class Res16UNetBase(ResNetBase):
             conv_type=self.NON_BLOCK_CONV_TYPE,
             D=D,
         )
-        self.bntr7 = get_norm(self.NORM_TYPE, self.PLANES[7], D, bn_momentum=bn_momentum)
+        self.bntr7 = get_norm(
+            self.NORM_TYPE, self.PLANES[7], D, bn_momentum=bn_momentum
+        )
 
         self.inplanes = self.PLANES[7] + self.INIT_DIM
         self.block8 = self._make_layer(

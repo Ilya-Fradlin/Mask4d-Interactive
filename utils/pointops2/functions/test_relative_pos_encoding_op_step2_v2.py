@@ -1,6 +1,12 @@
 import torch
 import pointops
-from torch_scatter import scatter_max, scatter_mean, scatter_add, scatter_min, scatter_sum
+from torch_scatter import (
+    scatter_max,
+    scatter_mean,
+    scatter_add,
+    scatter_min,
+    scatter_sum,
+)
 
 torch.manual_seed(1)
 
@@ -39,7 +45,9 @@ index_0_offsets = index_0_counts.cumsum(dim=-1)  # [N]
 
 print("v1 index_0_offsets.shape: ", index_0_offsets.shape)
 
-index_0_offsets = torch.cat([torch.zeros(1, dtype=torch.long).cuda(), index_0_offsets], 0)  # [N+1]
+index_0_offsets = torch.cat(
+    [torch.zeros(1, dtype=torch.long).cuda(), index_0_offsets], 0
+)  # [N+1]
 
 
 attn.requires_grad = True
@@ -53,7 +61,9 @@ output = pointops.attention_step2_with_rel_pos_value(
 loss = output.mean()
 loss.backward()
 
-print("output.shape: {}, output[:5,:10,:5]: {}".format(output.shape, output[:5, :10, :5]))
+print(
+    "output.shape: {}, output[:5,:10,:5]: {}".format(output.shape, output[:5, :10, :5])
+)
 print("attn.grad[:5, :3]: ", attn.grad[:5, :3])
 print("v.grad[:5, :3, :5]: ", v.grad[:5, :3, :5])
 print("table.grad[:5, :3, :5, :2]: ", table.grad[:5, :3, :5, :2])
@@ -78,7 +88,11 @@ output_v2 = pointops.attention_step2_with_rel_pos_value_v2(
 loss = output_v2.mean()
 loss.backward()
 
-print("output_v2.shape: {}, output_v2[:5,:10,:5]: {}".format(output_v2.shape, output_v2[:5, :10, :5]))
+print(
+    "output_v2.shape: {}, output_v2[:5,:10,:5]: {}".format(
+        output_v2.shape, output_v2[:5, :10, :5]
+    )
+)
 print("v2 attn.grad[:5, :3]: ", attn.grad[:5, :3])
 print("v2 v.grad[:5, :3, :5]: ", v.grad[:5, :3, :5])
 print("v2 table.grad[:5, :3, :5, :2]: ", table.grad[:5, :3, :5, :2])

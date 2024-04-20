@@ -1,6 +1,12 @@
 import torch
 import pointops
-from torch_scatter import scatter_max, scatter_mean, scatter_add, scatter_min, scatter_sum
+from torch_scatter import (
+    scatter_max,
+    scatter_mean,
+    scatter_add,
+    scatter_min,
+    scatter_sum,
+)
 
 torch.manual_seed(1)
 
@@ -55,7 +61,11 @@ output_v2 = pointops.dot_prod_with_idx_v2(
 loss = output_v2.mean()
 loss.backward()
 
-print("output_v2.shape: {}, output_v2[:5,:10]: {}".format(output_v2.shape, output_v2[:5, :10]))
+print(
+    "output_v2.shape: {}, output_v2[:5,:10]: {}".format(
+        output_v2.shape, output_v2[:5, :10]
+    )
+)
 print("v2 query.grad[:5, :3, :5]: ", query.grad[:5, :3, :5])
 print("v2 table_q.grad[:5, :3, :5, :2]: ", table_q.grad[:5, :3, :5, :2])
 print("v2 key.grad[:5, :3, :5]: ", key.grad[:5, :3, :5])

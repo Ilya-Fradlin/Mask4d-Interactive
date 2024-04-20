@@ -27,15 +27,21 @@ def flatten_dict(d, parent_key="", sep="_"):
 
 
 class RegularCheckpointing(pl.Callback):
-    def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"):
+    def on_train_epoch_end(
+        self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
+    ):
         general = pl_module.config.general
         trainer.save_checkpoint(f"{general.save_dir}/last-epoch.ckpt")
         print("Checkpoint created")
 
 
 def associate_instances(previous_ins_label, current_ins_label):
-    previous_instance_ids, c_p = np.unique(previous_ins_label[previous_ins_label != 0], return_counts=True)
-    current_instance_ids, c_c = np.unique(current_ins_label[current_ins_label != 0], return_counts=True)
+    previous_instance_ids, c_p = np.unique(
+        previous_ins_label[previous_ins_label != 0], return_counts=True
+    )
+    current_instance_ids, c_c = np.unique(
+        current_ins_label[current_ins_label != 0], return_counts=True
+    )
 
     associations = {0: 0}
 
@@ -54,8 +60,14 @@ def associate_instances(previous_ins_label, current_ins_label):
     association_costs = torch.zeros(p_n, c_n)
     for i, p_id in enumerate(large_previous_instance_ids):
         for j, c_id in enumerate(large_current_instance_ids):
-            intersection = np.sum((previous_ins_label == p_id) & (current_ins_label == c_id))
-            union = np.sum(previous_ins_label == p_id) + np.sum(current_ins_label == c_id) - intersection
+            intersection = np.sum(
+                (previous_ins_label == p_id) & (current_ins_label == c_id)
+            )
+            union = (
+                np.sum(previous_ins_label == p_id)
+                + np.sum(current_ins_label == c_id)
+                - intersection
+            )
             iou = intersection / union
             cost = 1 - iou
             association_costs[i, j] = cost
@@ -64,12 +76,16 @@ def associate_instances(previous_ins_label, current_ins_label):
 
     for i1, i2 in zip(idxes_1, idxes_2):
         if association_costs[i1][i2] < 1.0:
-            associations[large_current_instance_ids[i2]] = large_previous_instance_ids[i1]
+            associations[large_current_instance_ids[i2]] = large_previous_instance_ids[
+                i1
+            ]
     return associations
 
 
 def save_predictions(sem_preds, ins_preds, seq_name, sweep_name):
-    filename = Path("/globalwork/yilmaz/submission/sequences") / seq_name / "predictions"
+    filename = (
+        Path("/globalwork/yilmaz/submission/sequences") / seq_name / "predictions"
+    )
     # assert not filename.exists(), "Path exists"
     filename.mkdir(parents=True, exist_ok=True)
     learning_map_inv = {

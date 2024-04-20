@@ -42,9 +42,13 @@ class ResNetBase(Model):
             D=D,
         )
 
-        self.bn1 = get_norm(NormType.BATCH_NORM, self.inplanes, D=self.D, bn_momentum=bn_momentum)
+        self.bn1 = get_norm(
+            NormType.BATCH_NORM, self.inplanes, D=self.D, bn_momentum=bn_momentum
+        )
         self.relu = ME.MinkowskiReLU(inplace=True)
-        self.pool = sum_pool(kernel_size=space_n_time_m(2, 1), stride=space_n_time_m(2, 1), D=D)
+        self.pool = sum_pool(
+            kernel_size=space_n_time_m(2, 1), stride=space_n_time_m(2, 1), D=D
+        )
 
         self.layer1 = self._make_layer(
             self.BLOCK,

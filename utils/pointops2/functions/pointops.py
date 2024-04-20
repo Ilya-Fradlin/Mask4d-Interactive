@@ -42,7 +42,9 @@ class KNNQuery(Function):
         m = new_xyz.shape[0]
         idx = torch.cuda.IntTensor(m, nsample).zero_()
         dist2 = torch.cuda.FloatTensor(m, nsample).zero_()
-        pointops_cuda.knnquery_cuda(m, nsample, xyz, new_xyz, offset, new_offset, idx, dist2)
+        pointops_cuda.knnquery_cuda(
+            m, nsample, xyz, new_xyz, offset, new_offset, idx, dist2
+        )
         return idx, torch.sqrt(dist2)
 
 
@@ -74,7 +76,9 @@ class Grouping(Function):
         (idx,) = ctx.saved_tensors
         m, nsample, c = grad_output.shape
         grad_input = torch.cuda.FloatTensor(n, c).zero_()
-        pointops_cuda.grouping_backward_cuda(m, nsample, c, grad_output, idx, grad_input)
+        pointops_cuda.grouping_backward_cuda(
+            m, nsample, c, grad_output, idx, grad_input
+        )
         return grad_input, None
 
 
@@ -88,7 +92,12 @@ class AttentionStep1(Function):
         input: q: (N, h, C//h), k: (N, h, C//h), index0: (M), index1: (M)
         output: output: [N, h, C//h]
         """
-        assert q.is_contiguous() and k.is_contiguous() and index0.is_contiguous() and index1.is_contiguous()
+        assert (
+            q.is_contiguous()
+            and k.is_contiguous()
+            and index0.is_contiguous()
+            and index1.is_contiguous()
+        )
 
         N_q, h, C_div_h = q.shape
         N_k = k.shape[0]
@@ -96,7 +105,9 @@ class AttentionStep1(Function):
         C = int(C_div_h * h)
 
         output = torch.cuda.FloatTensor(M, h).zero_()
-        pointops_cuda.attention_step1_forward_cuda(N_k, M, h, C, q, k, index0, index1, output)
+        pointops_cuda.attention_step1_forward_cuda(
+            N_k, M, h, C, q, k, index0, index1, output
+        )
         ctx.N_q = N_q
         ctx.N_k = N_k
         ctx.C = C
@@ -217,7 +228,18 @@ class AttentionStep1_v2(Function):
         # start = time.time()
 
         pointops_cuda.attention_step1_backward_cuda_v2(
-            N_q, M, h, C, n_max, grad_output, index0_offsets, index1, q, k, grad_q, grad_k
+            N_q,
+            M,
+            h,
+            C,
+            n_max,
+            grad_output,
+            index0_offsets,
+            index1,
+            q,
+            k,
+            grad_q,
+            grad_k,
         )
 
         # torch.cuda.synchronize()
@@ -239,7 +261,10 @@ class AttentionStep2(Function):
         output: output: [N, h, C//h]
         """
         assert (
-            attn.is_contiguous() and v.is_contiguous() and index0.is_contiguous() and index1.is_contiguous()
+            attn.is_contiguous()
+            and v.is_contiguous()
+            and index0.is_contiguous()
+            and index1.is_contiguous()
         )
 
         M, h = attn.shape
@@ -248,7 +273,9 @@ class AttentionStep2(Function):
         C = int(C_div_h * h)
 
         output = torch.cuda.FloatTensor(N_q, h, C // h).zero_()
-        pointops_cuda.attention_step2_forward_cuda(N_q, M, h, C, attn, v, index0, index1, output)
+        pointops_cuda.attention_step2_forward_cuda(
+            N_q, M, h, C, attn, v, index0, index1, output
+        )
         ctx.M = M
 
         # print("attn[:5,:5]: ", attn[:5, :5])
@@ -311,7 +338,10 @@ class AttentionStep2_v2(Function):
         output: output: [L, h, C//h]
         """
         assert (
-            attn.is_contiguous() and v.is_contiguous() and index0.is_contiguous() and index1.is_contiguous()
+            attn.is_contiguous()
+            and v.is_contiguous()
+            and index0.is_contiguous()
+            and index1.is_contiguous()
         )
 
         L = int(index0.max().item()) + 1
@@ -321,7 +351,9 @@ class AttentionStep2_v2(Function):
         C = int(C_div_h * h)
 
         output = torch.cuda.FloatTensor(L, h, C // h).zero_()
-        pointops_cuda.attention_step2_forward_cuda(N, M, h, C, attn, v, index0, index1, output)
+        pointops_cuda.attention_step2_forward_cuda(
+            N, M, h, C, attn, v, index0, index1, output
+        )
         ctx.M = M
 
         # print("attn[:5,:5]: ", attn[:5, :5])
@@ -375,14 +407,19 @@ class DotProdWithIdx(Function):
         output: output: [M, h]
         """
         assert (
-            q.is_contiguous() and index.is_contiguous() and table.is_contiguous() and rel_idx.is_contiguous()
+            q.is_contiguous()
+            and index.is_contiguous()
+            and table.is_contiguous()
+            and rel_idx.is_contiguous()
         )
 
         N, h, hdim = q.shape
         M = index.shape[0]
 
         output = torch.cuda.FloatTensor(M, h).zero_()
-        pointops_cuda.dot_prod_with_idx_forward_cuda(N, M, h, hdim, q, index, table, rel_idx, output)
+        pointops_cuda.dot_prod_with_idx_forward_cuda(
+            N, M, h, hdim, q, index, table, rel_idx, output
+        )
         ctx.save_for_backward(q, index, table, rel_idx)
         return output
 
@@ -454,11 +491,15 @@ class DotProdWithIdx_v2(Function):
         assert table_k.shape[0] == L and index_k.shape[0] == M
 
         # obtain the mapping from block_idx to m_idx
-        rel_idx_merge = rel_idx[:, 0] + rel_idx[:, 1] * L + rel_idx[:, 2] * (L**2)  # [M, ]
+        rel_idx_merge = (
+            rel_idx[:, 0] + rel_idx[:, 1] * L + rel_idx[:, 2] * (L**2)
+        )  # [M, ]
         sorted_values, sort_indices = torch.sort(rel_idx_merge)
         _, counts = torch.unique_consecutive(sorted_values, return_counts=True)
         rel_idx_offsets = torch.cumsum(counts, dim=-1)  # [T,]
-        rel_idx_offsets = torch.cat([torch.zeros(1, dtype=torch.long).cuda(), rel_idx_offsets], 0)  # [T+1,]
+        rel_idx_offsets = torch.cat(
+            [torch.zeros(1, dtype=torch.long).cuda(), rel_idx_offsets], 0
+        )  # [T+1,]
         n_max = counts.max()
         T = counts.shape[0]
 
@@ -490,7 +531,15 @@ class DotProdWithIdx_v2(Function):
         ctx.n_max = n_max
         ctx.T = T
         ctx.save_for_backward(
-            q, index_q, k, index_k, table_q, table_k, rel_idx, rel_idx_offsets, sort_indices
+            q,
+            index_q,
+            k,
+            index_k,
+            table_q,
+            table_k,
+            rel_idx,
+            rel_idx_offsets,
+            sort_indices,
         )
         return output
 
@@ -500,7 +549,17 @@ class DotProdWithIdx_v2(Function):
         input: grad_output: [M, h]
         output: (N, h, hdim), None, (L, h, hdim, 3), None
         """
-        q, index_q, k, index_k, table_q, table_k, rel_idx, rel_idx_offsets, sort_indices = ctx.saved_tensors
+        (
+            q,
+            index_q,
+            k,
+            index_k,
+            table_q,
+            table_k,
+            rel_idx,
+            rel_idx_offsets,
+            sort_indices,
+        ) = ctx.saved_tensors
         M, h = grad_output.shape
         N, _, hdim = q.shape
         L = table_q.shape[0]
@@ -605,7 +664,19 @@ class DotProdWithIdx_v3(Function):
         output = torch.cuda.FloatTensor(M, h).zero_()
         # pointops_cuda.dot_prod_with_idx_forward_cuda(N, M, h, hdim, q, index, table, rel_idx, output)
         pointops_cuda.dot_prod_with_idx_forward_cuda_v3(
-            N, M, h, hdim, n_max, q, index_q_offsets, k, index_k, table_q, table_k, rel_idx, output
+            N,
+            M,
+            h,
+            hdim,
+            n_max,
+            q,
+            index_q_offsets,
+            k,
+            index_k,
+            table_q,
+            table_k,
+            rel_idx,
+            output,
         )
 
         ctx.n_max = n_max
@@ -797,7 +868,18 @@ class AttentionStep2WithRelPosValue_v2(Function):
 
         output = torch.cuda.FloatTensor(N, h, hdim).zero_()
         pointops_cuda.attention_step2_with_rel_pos_value_forward_cuda_v2(
-            N, M, h, hdim, n_max, attn, v, index0_offsets, index1, table, rel_idx, output
+            N,
+            M,
+            h,
+            hdim,
+            n_max,
+            attn,
+            v,
+            index0_offsets,
+            index1,
+            table,
+            rel_idx,
+            output,
         )
 
         # print("attn[:5,:5]: ", attn[:5, :5])
@@ -874,7 +956,17 @@ class AttentionStep2WithRelPosValue_v2(Function):
 attention_step2_with_rel_pos_value_v2 = AttentionStep2WithRelPosValue_v2.apply
 
 
-def queryandgroup(nsample, xyz, new_xyz, feat, idx, offset, new_offset, use_xyz=True, return_indx=False):
+def queryandgroup(
+    nsample,
+    xyz,
+    new_xyz,
+    feat,
+    idx,
+    offset,
+    new_offset,
+    use_xyz=True,
+    return_indx=False,
+):
     """
     input: xyz: (n, 3), new_xyz: (m, 3), feat: (n, c), idx: (m, nsample), offset: (b), new_offset: (b)
     output: new_feat: (m, c+3, nsample), grouped_idx: (m, nsample)
@@ -907,7 +999,9 @@ def queryandgroup(nsample, xyz, new_xyz, feat, idx, offset, new_offset, use_xyz=
 def Divide2Patch(nsample, xyz, offset, return_offset=False, anchor_scale=None):
     # nsample: 16  xyz: (n, 3)  offset: (b)
     downsample_scale = anchor_scale or nsample
-    new_offset, count = [offset[0].item() // downsample_scale], offset[0].item() // downsample_scale
+    new_offset, count = [offset[0].item() // downsample_scale], offset[
+        0
+    ].item() // downsample_scale
     for i in range(1, offset.shape[0]):
         count += (offset[i].item() - offset[i - 1].item()) // downsample_scale
         new_offset.append(count)
@@ -933,7 +1027,9 @@ class Subtraction(Function):
         n, c = input1.shape
         nsample = idx.shape[-1]
         output = torch.cuda.FloatTensor(n, nsample, c).zero_()
-        pointops_cuda.subtraction_forward_cuda(n, nsample, c, input1, input2, idx, output)
+        pointops_cuda.subtraction_forward_cuda(
+            n, nsample, c, input1, input2, idx, output
+        )
         ctx.save_for_backward(idx)
         return output
 
@@ -947,7 +1043,9 @@ class Subtraction(Function):
         n, nsample, c = grad_output.shape
         grad_input1 = torch.cuda.FloatTensor(n, c).zero_()
         grad_input2 = torch.cuda.FloatTensor(n, c).zero_()
-        pointops_cuda.subtraction_backward_cuda(n, nsample, c, idx, grad_output, grad_input1, grad_input2)
+        pointops_cuda.subtraction_backward_cuda(
+            n, nsample, c, idx, grad_output, grad_input1, grad_input2
+        )
         return grad_input1, grad_input2, None
 
 
@@ -961,11 +1059,17 @@ class Aggregation(Function):
         input: input: (n, c), position: (n, nsample, c), weight : (n, nsample, c'), idx: (n, nsample)
         output: (n, c)
         """
-        assert input.is_contiguous() and position.is_contiguous() and weight.is_contiguous()
+        assert (
+            input.is_contiguous()
+            and position.is_contiguous()
+            and weight.is_contiguous()
+        )
         n, nsample, c = position.shape
         w_c = weight.shape[-1]
         output = torch.cuda.FloatTensor(n, c).zero_()
-        pointops_cuda.aggregation_forward_cuda(n, nsample, c, w_c, input, position, weight, idx, output)
+        pointops_cuda.aggregation_forward_cuda(
+            n, nsample, c, w_c, input, position, weight, idx, output
+        )
         ctx.save_for_backward(input, position, weight, idx)
         return output
 
@@ -1075,7 +1179,9 @@ class Interpolation(Function):
         idx, weight = ctx.saved_tensors
         n, c = grad_output.shape
         grad_input = torch.cuda.FloatTensor(m, c).zero_()
-        pointops_cuda.interpolation_backward_cuda(n, c, k, grad_output, idx, weight, grad_input)
+        pointops_cuda.interpolation_backward_cuda(
+            n, c, k, grad_output, idx, weight, grad_input
+        )
         return None, None, grad_input, None, None, None
 
 
