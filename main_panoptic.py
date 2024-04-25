@@ -4,7 +4,7 @@ import hydra
 import torch
 from dotenv import load_dotenv
 from omegaconf import DictConfig, OmegaConf
-from trainer.trainer import PanopticSegmentation
+from trainer.trainer import ObjectSegmentation
 from utils.utils import flatten_dict, RegularCheckpointing
 from pytorch_lightning import Trainer, seed_everything
 
@@ -30,11 +30,9 @@ def get_parameters(cfg: DictConfig):
     for log in cfg.logging:
         print(log)
         loggers.append(hydra.utils.instantiate(log))
-        loggers[-1].log_hyperparams(
-            flatten_dict(OmegaConf.to_container(cfg, resolve=True))
-        )
+        loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
 
-    model = PanopticSegmentation(cfg)
+    model = ObjectSegmentation(cfg)
 
     logger.info(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
     return cfg, model, loggers

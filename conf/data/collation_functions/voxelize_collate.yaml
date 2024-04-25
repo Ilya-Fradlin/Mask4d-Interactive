@@ -2,15 +2,18 @@
 
 train_collation:
   _target_: datasets.utils.VoxelizeCollate
+  mode: train
   ignore_label: ${data.ignore_label}
   voxel_size: ${data.voxel_size}
 
 validation_collation:
   _target_: datasets.utils.VoxelizeCollate
+  mode: validation
   ignore_label: ${data.ignore_label}
   voxel_size: ${data.voxel_size}
 
 test_collation:
   _target_: datasets.utils.VoxelizeCollate
+  mode: test
   ignore_label: ${data.ignore_label}
   voxel_size: ${data.voxel_size}

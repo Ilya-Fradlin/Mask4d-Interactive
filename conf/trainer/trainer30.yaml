@@ -2,3 +2,25 @@
 max_epochs: 30
 check_val_every_n_epoch: 5
 num_sanity_val_steps: 2
+# # training
+# parser.add_argument('--lr', default=0.0001, type=float)
+# parser.add_argument('--weight_decay', default=0.0001, type=float)
+# parser.add_argument('--lr_drop', default=[1000], type=int)
+# parser.add_argument('--epochs', default=1100, type=int)
+# parser.add_argument('--val_epochs', default=50, type=int)
+# parser.add_argument('--batch_size', default=5, type=int)
+# parser.add_argument('--val_batch_size', default=1, type=int)
+# parser.add_argument('--clip_max_norm', default=0.1, type=float,
+#                     help='gradient clipping max norm')
+# parser.add_argument('--device', default='cuda',
+#                     help='device to use for training / testing')
+# parser.add_argument('--seed', default=42, type=int)
+# parser.add_argument('--output_dir', default='output',
+#                     help='path where to save, empty for no saving')
+# parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
+#                     help='start epoch')
+# parser.add_argument('--num_workers', default=2, type=int)
+# parser.add_argument('--resume', default='', help='resume from checkpoint')
+# parser.add_argument('--max_num_clicks', default=20, help='maximum number of clicks per object on average', type=int)
+
+# parser.add_argument('--job_name', default='test', type=str)

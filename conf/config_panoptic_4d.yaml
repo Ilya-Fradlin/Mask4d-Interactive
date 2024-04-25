@@ -9,6 +9,7 @@ general:
   experiment_name: ${now:%Y-%m-%d_%H%M%S}
   save_dir: saved/${general.experiment_name}
   gpus: 1
+  max_num_clicks: 10
 
 defaults:
   - data: kitti
@@ -16,7 +17,7 @@ defaults:
   - data/datasets: semantic_kitti
   - data/collation_functions: voxelize_collate
   - logging: full
-  - model: mask4d
+  - model: interactive4d
   - optimizer: adamw
   - scheduler: onecyclelr
   - trainer: trainer30

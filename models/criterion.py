@@ -1,166 +1,133 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-
-
-def dice_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float):
-    inputs = inputs.sigmoid()
-    inputs = inputs.flatten(1)
-    numerator = 2 * (inputs * targets).sum(-1)
-    denominator = inputs.sum(-1) + targets.sum(-1)
-    loss = 1 - (numerator + 1) / (denominator + 1)
-    return loss.sum() / num_masks
-
-
-dice_loss_jit = torch.jit.script(dice_loss)  # type: torch.jit.ScriptModule
-
-
-def sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float):
-    loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
-    return loss.mean(1).sum() / num_masks
-
-
-sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.ScriptModule
-
-
-def box_loss(inputs: torch.Tensor, targets: torch.Tensor, num_bboxs: float):
-    loss = F.l1_loss(inputs, targets, reduction="none")
-    return loss.mean(1).sum() / num_bboxs
-
-
-box_loss_jit = torch.jit.script(box_loss)  # type: torch.jit.ScriptModule
+from typing import Optional
+from torch import Tensor
 
 
 class SetCriterion(nn.Module):
-    """This class computes the loss for DETR.
-    The process happens in two steps:
-        1) we compute hungarian assignment between ground truth boxes and the outputs of the model
-        2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
-    """
 
-    def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses):
-        """Create the criterion.
-        Parameters:
-            num_classes: number of object categories, omitting the special no-object category
-            matcher: module able to compute a matching between targets and proposals
-            weight_dict: dict containing as key the names of the losses and as values their relative weight.
-            eos_coef: relative classification weight applied to the no-object category
-            losses: list of all the losses to be applied. See get_loss for list of available losses.
-        """
+    def __init__(self, losses, weight_dict):
         super().__init__()
-        self.num_classes = num_classes
-        self.matcher = matcher
         self.weight_dict = weight_dict
-        self.eos_coef = eos_coef
         self.losses = losses
-        empty_weight = torch.ones(num_classes + 1)
-        empty_weight[-1] = self.eos_coef
 
-        self.register_buffer("empty_weight", empty_weight)
-
-    def loss_labels(self, outputs, targets, indices):
-        src_logits = outputs["pred_logits"].float()
-
-        idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat(
-            [t["labels"][J] for t, (_, J) in zip(targets, indices)]
-        )
-        target_classes = torch.full(
-            src_logits.shape[:2],
-            self.num_classes,
-            dtype=torch.int64,
-            device=src_logits.device,
-        )
-        target_classes[idx] = target_classes_o
-
-        loss_ce = F.cross_entropy(
-            src_logits.transpose(1, 2),
-            target_classes,
-            self.empty_weight,
-            ignore_index=255,
-        )
-        losses = {"loss_ce": loss_ce}
-        return losses
-
-    def loss_masks(self, outputs, targets, indices):
-        loss_masks = []
-        loss_dices = []
-
-        for batch_id, (map_id, target_id) in enumerate(indices):
-            map = outputs["pred_masks"][batch_id][:, map_id].T
-            target_mask = targets[batch_id]["masks"][target_id].float()
-            num_masks = target_mask.shape[0]
-
-            loss_masks.append(sigmoid_ce_loss_jit(map, target_mask, num_masks))
-            loss_dices.append(dice_loss_jit(map, target_mask, num_masks))
-        return {
-            "loss_mask": torch.sum(torch.stack(loss_masks)),
-            "loss_dice": torch.sum(torch.stack(loss_dices)),
-        }
-
-    def loss_bboxs(self, outputs, targets, indices):
-        loss_box = torch.zeros(1, device=outputs["pred_bboxs"].device)
-        for batch_id, (map_id, target_id) in enumerate(indices):
-            pred_bboxs = outputs["pred_bboxs"][batch_id, map_id, :]
-            target_bboxs = targets[batch_id]["bboxs"][target_id]
-            target_classes = targets[batch_id]["labels"][target_id]
-            keep_things = target_classes < 8
-            if torch.any(keep_things):
-                target_bboxs = target_bboxs[keep_things]
-                pred_bboxs = pred_bboxs[keep_things]
-                num_bboxs = target_bboxs.shape[0]
-                loss_box += box_loss_jit(pred_bboxs, target_bboxs, num_bboxs)
-        return {
-            "loss_box": loss_box,
-        }
-
-    def _get_src_permutation_idx(self, indices):
-        # permute predictions following indices
-        batch_idx = torch.cat(
-            [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
-        )
-        src_idx = torch.cat([src for (src, _) in indices])
-        return batch_idx, src_idx
-
-    def _get_tgt_permutation_idx(self, indices):
-        # permute targets following indices
-        batch_idx = torch.cat(
-            [torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)]
-        )
-        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
-        return batch_idx, tgt_idx
-
-    def get_loss(self, loss, outputs, targets, indices):
-        loss_map = {
-            "labels": self.loss_labels,
-            "masks": self.loss_masks,
-            "bboxs": self.loss_bboxs,
-        }
-        return loss_map[loss](outputs, targets, indices)
-
-    def forward(self, outputs, targets):
-        """This performs the loss computation.
-        Parameters:
-             outputs: dict of tensors, see the output specification of the model for the format
-             targets: list of dicts, such that len(targets) == batch_size.
-                      The expected keys in each dict depends on the losses applied, see each loss' doc
+    def multiclass_dice_loss(
+        self,
+        input: Tensor,
+        target: Tensor,
+        eps: float = 1e-6,
+        check_target_validity: bool = True,
+        ignore_mask: Optional[Tensor] = None,
+    ) -> Tensor:
         """
-        outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
+        Computes DICE loss for multi-class predictions. API inputs are identical to torch.nn.functional.cross_entropy()
+        :param input: tensor of shape [N, C, *] with unscaled logits
+        :param target: tensor of shape [N, *]
+        :param eps:
+        :param check_target_validity: checks if the values in the target are valid
+        :param ignore_mask: optional tensor of shape [N, *]
+        :return: tensor
+        """
+        assert input.ndim >= 2
+        input = input.softmax(1)
+        num_classes = input.size(1)
 
-        # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.matcher(outputs_without_aux, targets)
+        if check_target_validity:
+            class_ids = target.unique()
+            assert not torch.any(
+                torch.logical_or(class_ids < 0, class_ids >= num_classes)
+            ), f"Number of classes = {num_classes}, but target has the following class IDs: {class_ids.tolist()}"
+
+        target = torch.stack([target == cls_id for cls_id in range(0, num_classes)], 1).to(
+            dtype=input.dtype
+        )  # [N, C, *]
+
+        if ignore_mask is not None:
+            ignore_mask = ignore_mask.unsqueeze(1)
+            expand_dims = [-1, input.size(1)] + ([-1] * (ignore_mask.ndim - 2))
+            ignore_mask = ignore_mask.expand(*expand_dims)
+
+        return self.dice_loss(input, target, eps=eps, ignore_mask=ignore_mask)
+
+    def dice_loss(
+        self, input: Tensor, target: Tensor, ignore_mask: Optional[Tensor] = None, eps: Optional[float] = 1e-6
+    ):
+        """
+        Computes the DICE or soft IoU loss.
+        :param input: tensor of shape [N, *]
+        :param target: tensor with shape identical to input
+        :param ignore_mask: tensor of same shape as input. non-zero values in this mask will be
+        :param eps
+        excluded from the loss calculation.
+        :return: tensor
+        """
+        assert input.shape == target.shape, f"Shape mismatch between input ({input.shape}) and target ({target.shape})"
+        assert input.dtype == target.dtype
+
+        if torch.is_tensor(ignore_mask):
+            assert ignore_mask.dtype == torch.bool
+            assert input.shape == ignore_mask.shape, (
+                f"Shape mismatch between input ({input.shape}) and " f"ignore mask ({ignore_mask.shape})"
+            )
+            input = torch.where(ignore_mask, torch.zeros_like(input), input)
+            target = torch.where(ignore_mask, torch.zeros_like(target), target)
+
+        input = input.flatten(1)
+        target = target.detach().flatten(1)
+
+        numerator = 2.0 * (input * target).mean(1)
+        denominator = (input + target).mean(1)
+
+        soft_iou = (numerator + eps) / (denominator + eps)
+
+        return torch.where(numerator > eps, 1.0 - soft_iou, soft_iou * 0.0)
+
+    def loss_bce(self, outputs, targets, weights=None):
+
+        pred_masks = outputs["pred_masks"]
+
+        loss = 0.0
+
+        for i in range(len(pred_masks)):
+            loss_sample = (F.cross_entropy(pred_masks[i], targets[i].long(), reduction="none") * weights[i]).mean()
+            loss += loss_sample
+
+        loss = loss / len(pred_masks)
+
+        return {"loss_bce": loss}
+
+    def loss_dice(self, outputs, targets, weights=None):
+
+        pred_masks = outputs["pred_masks"]
+        loss = 0.0
+        for i in range(len(pred_masks)):
+            loss_sample = (self.multiclass_dice_loss(pred_masks[i], targets[i].long()) * weights[i]).mean()
+            loss += loss_sample
+
+        loss = loss / len(pred_masks)
+        return {"loss_dice": loss}
+
+    def get_loss(self, loss, outputs, targets, weights=None):
+        loss_map = {"bce": self.loss_bce, "dice": self.loss_dice}
+        assert loss in loss_map, f"do you really want to compute {loss} loss?"
+        return loss_map[loss](outputs, targets, weights)
+
+    def forward(self, outputs, targets, weights=None):
+
+        outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs" and k != "enc_outputs"}
 
         # Compute all the requested losses
         losses = {}
         for loss in self.losses:
-            losses.update(self.get_loss(loss, outputs, targets, indices))
+            kwargs = {}
+            losses.update(self.get_loss(loss, outputs, targets, weights))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
-                indices = self.matcher(aux_outputs, targets)
                 for loss in self.losses:
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices)
+                    l_dict = self.get_loss(loss, aux_outputs, targets, weights)
                     l_dict = {k + f"_{i}": v for k, v in l_dict.items()}
                     losses.update(l_dict)
 
