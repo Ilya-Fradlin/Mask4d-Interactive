@@ -115,9 +115,7 @@ def get_next_click_coo_torch(discrete_coords, unique_labels, gt, pred, pairwise_
     return center_global_id, center_coo, center_label, max_dist, candidates
 
 
-def get_next_simulated_click_multi(
-    error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances
-):
+def get_next_simulated_click_multi(error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances):
     """Sample the next clicks for each error region"""
 
     click_dict = {}

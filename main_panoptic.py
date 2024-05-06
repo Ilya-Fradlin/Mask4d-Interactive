@@ -8,6 +8,8 @@ from trainer.trainer import ObjectSegmentation
 from utils.utils import flatten_dict, RegularCheckpointing
 from pytorch_lightning import Trainer, seed_everything
 
+from pytorch_lightning.callbacks import ModelCheckpoint
+
 
 def get_parameters(cfg: DictConfig):
     logger = logging.getLogger(__name__)
@@ -46,17 +48,30 @@ def train(cfg: DictConfig):
     for cb in cfg.callbacks:
         callbacks.append(hydra.utils.instantiate(cb))
 
-    callbacks.append(RegularCheckpointing())
+    # callbacks.append(RegularCheckpointing())
     # torch.use_deterministic_algorithms(True)
+    callbacks.append(
+        ModelCheckpoint(
+            monitor="mIoU",
+            dirpath=cfg.general.save_dir,
+            filename="last-epoch.ckpt",
+            every_n_epochs=1,
+            # filename="last-epoch-{epoch:02d}-{mIoU:.2f}"
+        )
+    )
     runner = Trainer(
         logger=loggers,
-        accelerator="gpu",
-        devices=1,
         callbacks=callbacks,
         default_root_dir=str(cfg.general.save_dir),
+        log_every_n_steps=50,
+        profiler="simple",
+        devices="auto",
+        accelerator="gpu",
+        strategy="ddp",
         **cfg.trainer,
     )
-    runner.fit(model, ckpt_path=cfg.general.ckpt_path)
+    runner.fit(model)
+    # runner.fit(model, ckpt_path="/home/fradlin/Github/Mask4D-Interactive/saved/2024-04-30_071910/last-epoch.ckpt")
 
 
 @hydra.main(config_path="conf", config_name="config_panoptic_4d.yaml")

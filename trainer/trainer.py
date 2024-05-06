@@ -3,6 +3,7 @@ import math
 import hydra
 import copy
 import random
+import warnings
 import MinkowskiEngine as ME
 import numpy as np
 import pytorch_lightning as pl
@@ -10,18 +11,20 @@ import torch
 from sklearn.cluster import DBSCAN
 from contextlib import nullcontext
 from collections import defaultdict
+
+import utils.misc as utils
 from utils.utils import associate_instances, save_predictions
 from utils.seg import mean_iou, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks
-import utils.misc as utils
+from models.metrics.utils import Evaluator, IoU_at_numClicks, NumClicks_for_IoU
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 
 class ObjectSegmentation(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.save_hyperparameters()
         # model
-        self.model = hydra.utils.instantiate(config.model)
+        self.interactive4d = hydra.utils.instantiate(config.model)
         self.optional_freeze = nullcontext
 
         weight_dict = {
@@ -33,7 +36,7 @@ class ObjectSegmentation(pl.LightningModule):
         # TODO: check this aux loss
         if config.loss.aux:
             aux_weight_dict = {}
-            for i in range(self.model.num_decoders * self.model.num_levels):
+            for i in range(self.interactive4d.num_decoders * self.interactive4d.num_levels):
                 aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
             weight_dict.update(aux_weight_dict)
 
@@ -43,13 +46,21 @@ class ObjectSegmentation(pl.LightningModule):
         self.class_evaluator = hydra.utils.instantiate(config.metric)
         self.last_seq = None
 
+        # self.validation_step_outputs = []
+        # self.training_step_outputs = []
+        # TODO handle better the metric logger
+        self.metric_logger = utils.MetricLogger(delimiter="  ")
+        self.iou_at_numClicks = IoU_at_numClicks()
+        self.numClicks_for_IoU = NumClicks_for_IoU()
+
+        self.save_hyperparameters()
+
     def forward(self, x, raw_coordinates=None, feats=None, click_idx=None, is_eval=False):
         with self.optional_freeze():
-            x = self.model(x, raw_coordinates=raw_coordinates, feats=feats, is_eval=is_eval)
+            x = self.interactive4d(x, raw_coordinates=raw_coordinates, feats=feats, is_eval=is_eval)
         return x
 
     def training_step(self, batch, batch_idx):
-        metric_logger = utils.MetricLogger(delimiter="  ")
 
         data, target = batch
 
@@ -64,8 +75,14 @@ class ObjectSegmentation(pl.LightningModule):
 
         click_idx, obj2label, labels = self.verify_labels_post_quantization(labels, click_idx, obj2label, batch_size)
 
+        # Check if there is more than just the background in the scene
+        for idx in range(batch_size):
+            if len(labels[idx].unique()) < 2:
+                # If there is only the background in the scene, skip the scene
+                return None
+
         data = ME.SparseTensor(coordinates=data.coordinates, features=feats, device=self.device)
-        pcd_features, aux, coordinates, pos_encodings_pcd = self.model.forward_backbone(data, raw_coordinates=raw_coords)
+        pcd_features, aux, coordinates, pos_encodings_pcd = self.interactive4d.forward_backbone(data, raw_coordinates=raw_coords)
 
         click_time_idx = copy.deepcopy(click_idx)
 
@@ -81,10 +98,10 @@ class ObjectSegmentation(pl.LightningModule):
             click_idx=click_idx,
             click_time_idx=click_time_idx,
         )
+        self.interactive4d.train()
 
         #########  2. real forward pass  #########
-        self.model.train()
-        outputs = self.model.forward_mask(
+        outputs = self.interactive4d.forward_mask(
             pcd_features, aux, coordinates, pos_encodings_pcd, click_idx=click_idx, click_time_idx=click_time_idx
         )
 
@@ -109,17 +126,34 @@ class ObjectSegmentation(pl.LightningModule):
             pred_logits = outputs["pred_masks"]
             pred = [p.argmax(-1) for p in pred_logits]
             general_miou = mean_iou(pred, labels, obj2label)
-            metric_logger.update(mIoU=general_miou)
+            self.metric_logger.update(mIoU=general_miou)
+            self.metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
 
-            metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
+        # self.training_step_outputs.extend(losses)
 
-        print("Averaged stats:", metric_logger)
+        self.log("train/loss", losses, prog_bar=True)
+        self.log("train/mIoU", general_miou, prog_bar=True)
 
         return losses
 
-    def validation_step(self, batch, batch_idx):
+    def on_training_epoch_end(self):
+        # TODO
+        train_stats = {k: meter.global_avg for k, meter in self.metric_logger.meters.items()}
+        self.log_dict({"lr_rate": train_stats["lr"]})
+        self.log_dict(
+            {
+                "train/epoch": self.current_epoch,
+                "train/loss_epoch": train_stats["loss"],
+                "train/loss_bce_epoch": train_stats["loss_bce"],
+                "train/loss_dice_epoch": train_stats["loss_dice"],
+                "train/mIoU_epoch": train_stats["mIoU"],
+            },
+            on_step=True,
+        )
+        print("Averaged stats:", self.metric_logger)
+        self.metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
 
-        metric_logger = utils.MetricLogger(delimiter="  ")
+    def validation_step(self, batch, batch_idx):
 
         data, target = batch
 
@@ -141,9 +175,15 @@ class ObjectSegmentation(pl.LightningModule):
         click_idx, obj2label, labels = self.verify_labels_post_quantization(labels, click_idx, obj2label, batch_size)
         click_time_idx = copy.deepcopy(click_idx)
 
+        # Check if there is more than just the background in the scene
+        for idx in range(batch_size):
+            if len(labels[idx].unique()) < 2:
+                # If there is only the background in the scene, skip the scene
+                return
+
         ###### interactive evaluation ######
         data = ME.SparseTensor(coordinates=coords, features=feats, device=self.device)
-        pcd_features, aux, coordinates, pos_encodings_pcd = self.model.forward_backbone(data, raw_coordinates=raw_coords)
+        pcd_features, aux, coordinates, pos_encodings_pcd = self.interactive4d.forward_backbone(data, raw_coordinates=raw_coords)
 
         # TODO: check how is the max_num_clicks update more than 1 batch size
         max_num_clicks = num_obj[0] * self.config.general.max_num_clicks
@@ -151,7 +191,7 @@ class ObjectSegmentation(pl.LightningModule):
             if current_num_clicks == 0:
                 pred = [torch.zeros(l.shape).to(self.device) for l in labels]
             else:
-                outputs = self.model.forward_mask(
+                outputs = self.interactive4d.forward_mask(
                     pcd_features,
                     aux,
                     coordinates,
@@ -174,6 +214,8 @@ class ObjectSegmentation(pl.LightningModule):
 
             updated_pred = []
 
+            next_iou_target_index = 0
+            iou_targets = [0.5, 0.65, 0.80, 0.85, 0.90, 9999]
             for idx in range(batch_indicators.max() + 1):
                 sample_mask = batch_indicators == idx
                 sample_pred = pred[idx]
@@ -191,16 +233,18 @@ class ObjectSegmentation(pl.LightningModule):
                 sample_labels_full = labels_full[idx]
                 sample_iou, _ = mean_iou_scene(sample_pred_full, sample_labels_full)
 
-                line = (
-                    +mean_iou_scene
-                    + " "
-                    + str(num_obj[idx])
-                    + " "
-                    + str(current_num_clicks / num_obj[idx])
-                    + " "
-                    + str(sample_iou.cpu().numpy())
-                    + "\n"
-                )
+                # Logging IoU@1, IoU@3, IoU@5, IoU@10, IoU@15
+                average_clicks_per_obj = current_num_clicks / num_obj[idx]
+                if average_clicks_per_obj in [1, 3, 5, 10, 15]:
+                    self.iou_at_numClicks.update(iou=sample_iou.item(), number_of_clicks=average_clicks_per_obj)
+
+                # Logging NoC@50, NoC@65, NoC@80, NoC@85, NoC@90
+                if iou_targets[next_iou_target_index] < sample_iou:
+                    while iou_targets[next_iou_target_index] < sample_iou:
+                        self.numClicks_for_IoU.update(iou=iou_targets[next_iou_target_index], noc=average_clicks_per_obj)
+                        next_iou_target_index += 1
+                        if next_iou_target_index == len(iou_targets) - 1:  # 9999 (impossible value) is the last element
+                            break
 
                 new_clicks, new_clicks_num, new_click_pos, new_click_time = get_simulated_clicks(
                     sample_pred, sample_labels, sample_raw_coords, current_num_clicks, training=False
@@ -213,11 +257,9 @@ class ObjectSegmentation(pl.LightningModule):
                     )
 
             if current_num_clicks != 0:
-
                 general_miou = mean_iou(updated_pred, labels, obj2label)
-                metric_logger.update(mIoU=general_miou)
-
-                metric_logger.update(
+                self.metric_logger.update(mIoU=general_miou)
+                self.metric_logger.update(
                     loss=sum(loss_dict_reduced_scaled.values()),
                     **loss_dict_reduced_scaled,
                     **loss_dict_reduced_unscaled,
@@ -229,26 +271,75 @@ class ObjectSegmentation(pl.LightningModule):
                 new_clicks_num = 1
             current_num_clicks += new_clicks_num
 
-        return {general_miou}
+        pred = 0
+        # self.validation_step_outputs.append(pred)
+
+    def on_validation_epoch_end(self):
+        # TODO
+        print("--------- Evaluating Validation Performance  -----------")
+        # all_metrics = torch.stack(self.validation_step_outputs)
+        # evaluator = Evaluator(all_metrics)
+        # results_dict = evaluator.eval_results()
+        # print("****************************")
+        warnings.filterwarnings(
+            "ignore",
+            message="The ``compute`` method of metric NumClicks_for_IoU was called before the ``update`` method",
+            category=UserWarning,
+        )
+        results_dict = {}
+        results_dict["mIoU"] = self.metric_logger.meters["mIoU"].global_avg
+        metrics_dictionary, iou_thresholds = self.numClicks_for_IoU.compute()
+        for iou in iou_thresholds:
+            noc = metrics_dictionary[iou]["noc"]
+            count = metrics_dictionary[iou]["count"]
+            results_dict[f"scenes_reached_{iou}_iou"] = count.item()
+            if count == 0:
+                results_dict[f"NoC@{iou}"] = 0  # or return a default value or raise an error
+            else:
+                results_dict[f"NoC@{iou}"] = (noc / count).item()
+
+        iou_sums, counts = self.iou_at_numClicks.compute()
+        results_dict["IoU@1"] = (iou_sums[0] / counts[0]).item()
+        results_dict["IoU@3"] = (iou_sums[1] / counts[1]).item()
+        results_dict["IoU@5"] = (iou_sums[2] / counts[2]).item()
+        results_dict["IoU@10"] = (iou_sums[3] / counts[3]).item()
+        # results_dict["IoU@15"] = (iou_sums[4] / counts[4]).item()
+        print(results_dict)
+        stats = {k: meter.global_avg for k, meter in self.metric_logger.meters.items()}
+        stats.update(results_dict)
+
+        # self.validation_step_outputs.clear()  # free memory
+        self.metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
+
+        self.log_dict(
+            {
+                "val/epoch": self.current_epoch,
+                "val/loss_epoch": stats["loss"],
+                "val/loss_bce_epoch": stats["loss_bce"],
+                "val/loss_dice_epoch": stats["loss_dice"],
+                "val/mIoU_epoch": stats["mIoU"],
+                "val_metrics/NoC_50": stats["NoC@50"],
+                "val_metrics/NoC_50": stats["scenes_reached_50_iou"],
+                "val_metrics/NoC_65": stats["NoC@65"],
+                "val_metrics/NoC_65": stats["scenes_reached_65_iou"],
+                "val_metrics/NoC_80": stats["NoC@80"],
+                "val_metrics/NoC_80": stats["scenes_reached_80_iou"],
+                "val_metrics/NoC_85": stats["NoC@85"],
+                "val_metrics/NoC_85": stats["scenes_reached_85_iou"],
+                "val_metrics/NoC_90": stats["NoC@90"],
+                "val_metrics/NoC_90": stats["scenes_reached_90_iou"],
+                "val_metrics/IoU_1": stats["IoU@1"],
+                "val_metrics/IoU_3": stats["IoU@3"],
+                "val_metrics/IoU_5": stats["IoU@5"],
+                "val_metrics/IoU_10": stats["IoU@10"],
+                # "val_metrics/IoU_15": stats["IoU@15"],
+            }
+        )
+        self.log("mIoU", stats["mIoU"])
 
     def test_step(self, batch, batch_idx):
         # TODO
         pass
-
-    def training_epoch_end(self, outputs):
-        # TODO
-        train_loss = sum([out["loss"].cpu().item() for out in outputs]) / len(outputs)
-        results = {"train_loss_mean": train_loss}
-        self.log_dict(results)
-
-    def validation_epoch_end(self, outputs):
-        # TODO
-        print("In validation_epoch_end")
-        print(outputs)
-
-        all_preds = torch.stack(self.validation_step_outputs)
-        # do something with all preds
-        self.validation_step_outputs.clear()  # free memory
 
     def test_epoch_end(self, outputs):
         return {}
@@ -262,7 +353,7 @@ class ObjectSegmentation(pl.LightningModule):
         scheduler_config.update(self.config.scheduler.pytorch_lightning_params)
         return [optimizer], [scheduler_config]
 
-    def prepare_data(self):
+    def setup(self, stage):
         self.train_dataset = hydra.utils.instantiate(self.config.data.train_dataset)
         self.validation_dataset = hydra.utils.instantiate(self.config.data.validation_dataset)
         # self.test_dataset = hydra.utils.instantiate(self.config.data.test_dataset)
@@ -307,8 +398,8 @@ class ObjectSegmentation(pl.LightningModule):
         num_forward_iters = random.randint(0, 19)
 
         with torch.no_grad():
-            self.model.eval()
-            eval_model = self.model
+            self.interactive4d.eval()
+            eval_model = self.interactive4d
             while current_num_iter <= num_forward_iters:
                 if current_num_iter == 0:
                     pred = [torch.zeros(l.shape).to(raw_coords) for l in labels]

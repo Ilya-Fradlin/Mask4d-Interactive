@@ -4,4 +4,4 @@ export CUDA_LAUNCH_BLOCKING=1
 export HYDRA_FULL_ERROR=1
 
 # TRAIN
-python main_panoptic.py
+srun python main_panoptic.py
