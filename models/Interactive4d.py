@@ -129,7 +129,7 @@ class Interactive4D(nn.Module):
             self.ffn_attention.append(tmp_ffn_attention)
 
         self.decoder_norm = nn.LayerNorm(hidden_dim)
-        self.time_encode = PositionalEncoding1D(hidden_dim, 200)
+        self.time_encode = PositionalEncoding1D(hidden_dim, 800)
 
     def forward(self, x, raw_coordinates=None, feats=None, click_idx=None, is_eval=False):
         device = x.device
@@ -312,14 +312,18 @@ class Interactive4D(nn.Module):
 
             output_labels = output_masks.argmax(1)
 
-            bg_attn_mask = ~(output_labels == 0)
+            bg_attn_mask = ~(output_labels == 0)  # Masking all the points which were *not* predicted as background
             bg_attn_mask = bg_attn_mask.unsqueeze(0).repeat(bg_query_feat.shape[0], 1)
+            # prevent a scenario where a query would be completely masked out and have nothing
+            # to attend to, which could cause issues in the attention mechanism.
             bg_attn_mask[torch.where(bg_attn_mask.sum(-1) == bg_attn_mask.shape[-1])] = False
 
             fg_attn_mask = []
             for fg_obj_id in range(1, fg_masks.shape[-1] + 1):
-                fg_obj_mask = ~(output_labels == fg_obj_id)
+                fg_obj_mask = ~(output_labels == fg_obj_id)  # Masking all the points which were *not* predicted as the obj_id
                 fg_obj_mask = fg_obj_mask.unsqueeze(0).repeat(fg_query_num_split[fg_obj_id - 1], 1)
+                # prevent a scenario where a query would be completely masked out and have nothing
+                # to attend to, which could cause issues in the attention mechanism.
                 fg_obj_mask[torch.where(fg_obj_mask.sum(-1) == fg_obj_mask.shape[-1])] = False
                 fg_attn_mask.append(fg_obj_mask)
 

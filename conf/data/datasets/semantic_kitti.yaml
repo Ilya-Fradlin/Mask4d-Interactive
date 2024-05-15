@@ -5,6 +5,7 @@ train_dataset:
   mode: ${data.train_mode}
   add_distance: ${data.add_distance}
   sweep: ${data.sweep}
+  segment_full_scene: ${data.segment_full_scene}
   sample_choice: ${data.sample_choice}
   instance_population: 0 # ${data.instance_population}
   ignore_label: ${data.ignore_label}

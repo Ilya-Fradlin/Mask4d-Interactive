@@ -6,7 +6,7 @@ from torchmetrics import Metric
 class IoU_at_numClicks(Metric):
     higher_is_better = True
 
-    def __init__(self, num_clicks=[1, 3, 5, 10, 15]):
+    def __init__(self, num_clicks=[1, 2, 3, 4, 5]):
         super().__init__()
         self.num_clicks = num_clicks
 
@@ -36,11 +36,11 @@ class IoU_at_numClicks(Metric):
 
 class NumClicks_for_IoU(Metric):
 
-    def __init__(self, iou_thresholds=[50, 65, 80, 85, 90]):
+    def __init__(self, iou_thresholds=[0.50, 0.65, 0.80, 0.85, 0.90]):
         super().__init__()
 
-        self.iou_thresholds = iou_thresholds
-        for iou in iou_thresholds:
+        self.iou_thresholds = [int(100 * iou) for iou in iou_thresholds if iou <= 1]
+        for iou in self.iou_thresholds:
             self.add_state(f"noc_for_{iou}", default=torch.tensor(0.0), dist_reduce_fx="mean")
             self.add_state(f"count_for_{iou}", default=torch.tensor(0.0), dist_reduce_fx="mean")
 

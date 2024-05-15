@@ -19,8 +19,7 @@ def get_parameters(cfg: DictConfig):
     seed_everything(cfg.general.seed)
 
     # getting basic configuration
-    if cfg.general.get("gpus", None) is None:
-        cfg.general.gpus = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    cfg.general.gpus = torch.cuda.device_count()
     loggers = []
 
     if not os.path.exists(cfg.general.save_dir):
@@ -64,12 +63,10 @@ def train(cfg: DictConfig):
         # max_epochs=30,
         # check_val_every_n_epoch=1,
         # limit_train_batches=0.0002,
-        # limit_val_batches=0.001,
+        # limit_val_batches=0.0005,
     )
-    runner.fit(model)
-    # runner.fit(
-    #     model, ckpt_path="/home/fradlin/Github/Mask4D-Interactive/saved/2024-05-03_101924/epoch=14-val_mean_lstq=0.000.ckpt"
-    # )
+    # runner.fit(model)
+    runner.fit(model, ckpt_path="/home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt")
 
 
 @hydra.main(config_path="conf", config_name="config_panoptic_4d.yaml")

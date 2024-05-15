@@ -3,6 +3,7 @@ import sys
 import wandb
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from sklearn.cluster import KMeans
 
 
 if sys.version_info[:2] >= (3, 8):
@@ -71,15 +72,34 @@ def calculate_bounding_box_corners(min_x, max_x, min_y, max_y, min_z, max_z):
 
 
 def generate_wandb_objects3d(raw_coords, labels, pred, click_idx):
-    # Add a new dimension to labels
+    # Create a mapping from label to color
+    unique_labels = torch.unique(labels)
+    num_labels = unique_labels.size(0)
+    distinct_colors = generate_distinct_colors_kmeans(num_labels)
+    label_to_color = {label.item(): distinct_colors[i] for i, label in enumerate(unique_labels)}
+
+    # Add a new dimension to labels and pred
     labels = torch.unsqueeze(labels, dim=1)
     pred = torch.unsqueeze(pred, dim=1)
-    # Stack the tensors along the second dimension
+
+    # Prepare arrays to hold coordinates and corresponding colors
     pcd_gt = torch.cat((raw_coords, labels), dim=1).cpu().numpy()
     pcd_pred = torch.cat((raw_coords, pred), dim=1).cpu().numpy()
-    # Convert the 4th column to integers and add +1 for wandb class range
-    pcd_gt[:, 3] = pcd_gt[:, 3].astype(int) + 1
-    pcd_pred[:, 3] = pcd_pred[:, 3].astype(int) + 1
+
+    # Initialize arrays for points with RGB values
+    pcd_gt_rgb = np.zeros((pcd_gt.shape[0], 6))
+    pcd_pred_rgb = np.zeros((pcd_pred.shape[0], 6))
+    # Fill the arrays with coordinates and RGB values
+    pcd_gt_rgb[:, :3] = pcd_gt[:, :3]
+    pcd_pred_rgb[:, :3] = pcd_pred[:, :3]
+    for i in range(pcd_gt.shape[0]):
+        label = int(pcd_gt[i, 3])
+        color = label_to_color[label]
+        pcd_gt_rgb[i, 3:] = color
+    for i in range(pcd_pred.shape[0]):
+        label = int(pcd_pred[i, 3])
+        color = label_to_color[label]
+        pcd_pred_rgb[i, 3:] = color
 
     ####################################################################################
     ############### Get the Predicted and clicks as small Bounding Boxes ###############
@@ -102,7 +122,19 @@ def generate_wandb_objects3d(raw_coords, labels, pred, click_idx):
             }
             boxes_array.append(current_box_click)
 
-    gt_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_gt})
-    pred_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_pred, "boxes": np.array(boxes_array)})
+    gt_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_gt_rgb})
+    pred_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_pred_rgb, "boxes": np.array(boxes_array)})
 
     return gt_scene, pred_scene
+
+
+def generate_distinct_colors_kmeans(n):
+    # Sample a large number of colors in RGB space
+    np.random.seed(0)
+    large_sample = np.random.randint(0, 256, (10000, 3))
+
+    # Apply k-means clustering to find n clusters
+    kmeans = KMeans(n_clusters=n).fit(large_sample)
+    colors = kmeans.cluster_centers_.astype(int)
+
+    return [tuple(color) for color in colors]

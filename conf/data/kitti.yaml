@@ -16,6 +16,7 @@ in_channels: 2
 num_labels: 19 # out_channels
 instance_population: ${general.instance_population}
 sweep: 1
+segment_full_scene: true
 min_stuff_cls_id: 9
 min_points: 50
 class_names:
@@ -43,7 +44,7 @@ class_names:
 
 # data loader
 pin_memory: true
-num_workers: 32
+num_workers: 4
 batch_size: 4
 test_batch_size: 1
 

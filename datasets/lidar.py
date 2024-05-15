@@ -20,6 +20,7 @@ class LidarDataset(Dataset):
         volume_augmentations_path: Optional[str] = None,
         instance_population: Optional[int] = 0,
         sweep: Optional[int] = 1,
+        segment_full_scene=True,
     ):
         super(LidarDataset, self).__init__()
 
@@ -29,6 +30,7 @@ class LidarDataset(Dataset):
         self.add_distance = add_distance
         self.instance_population = instance_population
         self.sweep = sweep
+        self.segment_full_scene = segment_full_scene
         self.config = self._load_yaml("conf/semantic-kitti.yaml")
 
         # loading database file
@@ -173,24 +175,28 @@ class LidarDataset(Dataset):
 
         obj2label_map = {}
         click_idx = {}
-        if "validation" in self.mode:
+        if "validation" in self.mode and not self.segment_full_scene:
             obj_labels = np.zeros(panoptic_labels.shape)
             for obj_idx, label in scan["obj"].items():
                 obj_labels[panoptic_labels == label] = int(obj_idx)
                 obj2label_map[str(int(obj_idx))] = int(label)
             click_idx = scan["clicks"]
 
-        elif "train" in self.mode:
+        elif ("train" in self.mode) or ("validation" in self.mode and self.segment_full_scene):
             # no pre-defined object selected, choose random objects
             obj_labels = np.zeros(panoptic_labels.shape)
-
+            unique_panoptic_labels = scan["unique_panoptic_labels"]
+            # unique_panoptic_labels = np.unique(panoptic_labels)
             # drop unlabeled points from the unique labels
-            unique_panoptic_labels = np.unique(panoptic_labels)
-            unique_panoptic_labels = unique_panoptic_labels[unique_panoptic_labels != 0]
+            # unique_panoptic_labels = unique_panoptic_labels[unique_panoptic_labels != 0]
+            # unique_panoptic_labels = unique_panoptic_labels.tolist()
 
             max_num_obj = len(unique_panoptic_labels)
-            num_obj = np.random.randint(1, min(10, max_num_obj) + 1)
-            chosen_objects = random_sample(unique_panoptic_labels.tolist(), num_obj)
+            if self.segment_full_scene:
+                num_obj = max_num_obj
+            else:
+                num_obj = np.random.randint(1, min(10, max_num_obj) + 1)
+            chosen_objects = random_sample(unique_panoptic_labels, num_obj)
 
             for obj_idx, label in enumerate(chosen_objects):
                 obj_idx += 1  # 0 is background

@@ -47,8 +47,8 @@ class ObjectSegmentation(pl.LightningModule):
         self.class_evaluator = hydra.utils.instantiate(config.metric)
         self.validation_metric_logger = utils.MetricLogger(delimiter="  ")
         self.training_metric_logger = utils.MetricLogger(delimiter="  ")
-        self.iou_at_numClicks = IoU_at_numClicks()
-        self.numClicks_for_IoU = NumClicks_for_IoU()
+        self.iou_at_numClicks = IoU_at_numClicks(num_clicks=self.config.general.clicks_of_interest)
+        self.numClicks_for_IoU = NumClicks_for_IoU(iou_thresholds=self.config.general.iou_targets)
         # self.validation_step_outputs = []
         # self.training_step_outputs = []
 
@@ -191,7 +191,8 @@ class ObjectSegmentation(pl.LightningModule):
         pcd_features, aux, coordinates, pos_encodings_pcd = self.interactive4d.forward_backbone(data, raw_coordinates=raw_coords)
 
         # TODO: check how is the max_num_clicks update more than 1 batch size
-        iou_targets = [0.5, 0.65, 0.80, 0.85, 0.90, 9999]
+        iou_targets = self.config.general.iou_targets
+        iou_targets.append(9999)  # serving as a stop condition
         max_num_clicks = num_obj[0] * self.config.general.max_num_clicks
         next_iou_target_indices = {idx: 0 for idx in range(batch_size)}
         while current_num_clicks <= max_num_clicks:
@@ -236,11 +237,12 @@ class ObjectSegmentation(pl.LightningModule):
                 sample_pred_full = sample_pred[inverse_maps[idx]]
 
                 sample_labels_full = labels_full[idx]
+                # mean_iou_scene here is calculated for the entire scene (with all the points! not just the ones responsible for the quantized values)
                 sample_iou, _ = mean_iou_scene(sample_pred_full, sample_labels_full)
 
-                # Logging IoU@1, IoU@3, IoU@5, IoU@10, IoU@15
+                # Logging IoU@1, IoU@2, IoU@3, IoU@4, IoU@5
                 average_clicks_per_obj = current_num_clicks / num_obj[idx]
-                if average_clicks_per_obj in [1, 3, 5, 10, 15]:
+                if average_clicks_per_obj in self.config.general.clicks_of_interest:
                     self.iou_at_numClicks.update(iou=sample_iou.item(), noc=average_clicks_per_obj)
 
                 # Logging NoC@50, NoC@65, NoC@80, NoC@85, NoC@90
@@ -262,6 +264,7 @@ class ObjectSegmentation(pl.LightningModule):
                     )
 
             if current_num_clicks != 0:
+                # mean_iou here is calculated for just with the points responsible for the quantized values!
                 general_miou, label_miou_dict = mean_iou(updated_pred, labels, obj2label)
                 label_miou_dict = {"validation/" + k: v for k, v in label_miou_dict.items()}
                 self.log_dict(label_miou_dict, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
@@ -356,10 +359,10 @@ class ObjectSegmentation(pl.LightningModule):
                     "validation/Interactive_metrics/NoC_90": stats["NoC@90"],
                     "validation/Interactive_metrics/NoC_90": stats["scenes_reached_90_iou"],
                     "validation/Interactive_metrics/IoU_1": stats["IoU@1"],
+                    "validation/Interactive_metrics/IoU_2": stats["IoU@2"],
                     "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
+                    "validation/Interactive_metrics/IoU_4": stats["IoU@4"],
                     "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
-                    "validation/Interactive_metrics/IoU_10": stats["IoU@10"],
-                    # "val_metrics/IoU_15": stats["IoU@15"],
                 },
                 sync_dist=True,
             )
@@ -396,9 +399,6 @@ class ObjectSegmentation(pl.LightningModule):
         self.config.data.train_dataloader.batch_size = int(
             self.config.data.train_dataloader.batch_size / self.trainer.num_devices
         )
-        self.config.data.train_dataloader.num_workers = int(
-            self.config.data.train_dataloader.num_workers / self.trainer.num_devices
-        )
         print(
             f"train_dataloader - batch_size: {self.config.data.train_dataloader.batch_size}, effective_batch_size: {self.config.data.train_dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.train_dataloader.num_workers}"
         )
@@ -410,14 +410,11 @@ class ObjectSegmentation(pl.LightningModule):
         )
 
     def val_dataloader(self):
-        self.config.data.validation_dataloader.num_workers = (
-            self.config.data.validation_dataloader.num_workers / self.trainer.num_devices
-        )
-        self.config.data.validation_dataloader.batch_size = (
+        self.config.data.validation_dataloader.batch_size = int(
             self.config.data.validation_dataloader.batch_size / self.trainer.num_devices
         )
         print(
-            f"val_dataloader - batch_size: {self.config.optimizer.lr}, effective_batch_size: {self.config.data.train_dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.train_dataloader.num_workers}"
+            f"val_dataloader - batch_size: {self.config.data.train_dataloader.batch_size}, effective_batch_size: {self.config.data.train_dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.train_dataloader.num_workers}"
         )
         c_fn = hydra.utils.instantiate(self.config.data.validation_collation)
         return hydra.utils.instantiate(
