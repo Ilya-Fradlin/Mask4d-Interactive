@@ -16,63 +16,57 @@ class VoxelizeCollate:
     def __call__(self, batch):
 
         (
+            scene_names,
             coordinates,
             features,
             labels,
             original_labels,
             inverse_maps,
+            unique_maps,
             num_points,
             sequences,
             click_idxs,
             obj2labels,
-        ) = (
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-            [],
-        )
+        ) = ([], [], [], [], [], [], [], [], [], [], [])
 
         for sample in batch:
+            scene_names.append(sample["sequence"])
             click_idxs.append(sample["click_idx"])
             obj2labels.append(sample["obj2label"])
             original_labels.append(sample["labels"])
             num_points.append(sample["num_points"])
             sequences.append(sample["sequence"])
-            sample_c, sample_f, sample_l, inverse_map = voxelize(
+            sample_c, sample_f, sample_l, inverse_map, unique_map = voxelize(
                 sample["coordinates"],
                 sample["features"],
                 sample["labels"],
                 self.voxel_size,
             )
             inverse_maps.append(inverse_map)
+            unique_maps.append(unique_map)
             coordinates.append(sample_c)
             features.append(sample_f)
             labels.append(sample_l)
 
         # Concatenate all lists
-        target = generate_target(features, labels, original_labels, self.ignore_label)
+        target = generate_target(features, labels, original_labels, self.ignore_label, inverse_maps, unique_maps, obj2labels)
         coordinates, features = ME.utils.sparse_collate(coordinates, features)
         # TODO: why do we need here then the time i.e. features are: [original_x, original_y, original_z , time, intensity, distance]
         raw_coordinates = features[:, :3]  # [original_x, original_y, original_z , time]
         features = features[:, 4:]  # [intensity, distance]
+        collated_data = generate_collated_data(
+            scene_names=scene_names,
+            coordinates=coordinates,
+            features=features,
+            raw_coordinates=raw_coordinates,
+            num_points=num_points,
+            sequences=sequences,
+            click_idx=click_idxs,
+        )
 
         return (
-            NoGpu(
-                coordinates=coordinates,
-                features=features,
-                raw_coordinates=raw_coordinates,
-                inverse_maps=inverse_maps,
-                num_points=num_points,
-                sequences=sequences,
-                click_idx=click_idxs,
-                obj2label=obj2labels,
-            ),
-            target,
+            collated_data,  # collated_data
+            target,  # labels
         )
 
 
@@ -89,14 +83,18 @@ def voxelize(coordinates, features, labels, voxel_size):
 
     sample_f = torch.from_numpy(sample_f).float()
     sample_l = torch.from_numpy(labels[unique_map])
-    return sample_c, sample_f, sample_l, inverse_map
+    return sample_c, sample_f, sample_l, inverse_map, unique_map
 
 
-def generate_target(features, labels, original_labels, ignore_label):
+def generate_target(features, labels, original_labels, ignore_label, inverse_maps, unique_maps, obj2labels):
     # TODO do we really need the entire original_labels?
     target = {}
     target["labels"] = labels
     target["labels_full"] = original_labels
+    target["inverse_maps"] = inverse_maps
+    target["unique_maps"] = unique_maps
+    target["obj2labels"] = obj2labels
+
     return target
 
     # for feat, lb in zip(features, labels, original_labels):
@@ -138,6 +136,27 @@ def generate_target(features, labels, original_labels, ignore_label):
     # return target
 
 
+def generate_collated_data(
+    scene_names,
+    coordinates,
+    features,
+    raw_coordinates,
+    num_points=None,
+    sequences=None,
+    click_idx=None,
+):
+    collated_data = {}
+    collated_data["scene_names"] = scene_names
+    collated_data["coordinates"] = coordinates
+    collated_data["features"] = features
+    collated_data["raw_coordinates"] = raw_coordinates
+    collated_data["num_points"] = num_points
+    collated_data["sequences"] = sequences
+    collated_data["click_idx"] = click_idx
+
+    return collated_data
+
+
 class NoGpu:
     def __init__(
         self,
@@ -145,6 +164,7 @@ class NoGpu:
         features,
         raw_coordinates,
         inverse_maps=None,
+        unique_maps=None,
         num_points=None,
         sequences=None,
         click_idx=None,
@@ -155,6 +175,7 @@ class NoGpu:
         self.features = features
         self.raw_coordinates = raw_coordinates
         self.inverse_maps = inverse_maps
+        self.unique_maps = unique_maps
         self.num_points = num_points
         self.sequences = sequences
         self.click_idx = click_idx

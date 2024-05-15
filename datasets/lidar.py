@@ -94,9 +94,9 @@ class LidarDataset(Dataset):
             acc_num_points.append(acc_num_points[-1] + len(coordinates))
 
             # features
-            features = points[:, 3:4]
+            features = points[:, 3:4]  # intensity
             time_array = np.ones((features.shape[0], 1)) * time
-            features = np.hstack((time_array, features))
+            features = np.hstack((time_array, features))  # (time, intensity)
             features_list.append(features)
 
             # labels
@@ -119,9 +119,7 @@ class LidarDataset(Dataset):
         if "train" in self.mode and self.instance_population > 0:
             max_instance_id = np.amax(labels[:, 1])
             pc_center = coordinates.mean(axis=0)
-            instance_c, instance_f, instance_l = self.populate_instances(
-                max_instance_id, pc_center, self.instance_population
-            )
+            instance_c, instance_f, instance_l = self.populate_instances(max_instance_id, pc_center, self.instance_population)
             coordinates = np.vstack((coordinates, instance_c))
             features = np.vstack((features, instance_f))
             labels = np.vstack((labels, instance_l))
@@ -133,7 +131,7 @@ class LidarDataset(Dataset):
                 (
                     features,
                     np.linalg.norm(coordinates - center_coordinate, axis=1)[:, np.newaxis],
-                )
+                )  #  now features include: (time, intensity, distance)
             )
 
         # volume and image augmentations for train
@@ -156,7 +154,7 @@ class LidarDataset(Dataset):
             "sequence": scan["scene"],
             "num_points": acc_num_points,
             "coordinates": coordinates,
-            "features": features,
+            "features": features,  # (coordinates, time, intensity, distance)
             "labels": labels,
             "click_idx": click_idx,
             "obj2label": obj2label_maps_list,

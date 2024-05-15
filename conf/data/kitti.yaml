@@ -43,9 +43,9 @@ class_names:
 
 # data loader
 pin_memory: true
-num_workers: 4
+num_workers: 32
 batch_size: 4
-test_batch_size: 2
+test_batch_size: 1
 
 # collation
 voxel_size: 0.05

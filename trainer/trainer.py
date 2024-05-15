@@ -1,4 +1,4 @@
-import statistics
+import wandb
 import math
 import hydra
 import copy
@@ -13,9 +13,9 @@ from contextlib import nullcontext
 from collections import defaultdict
 
 import utils.misc as utils
-from utils.utils import associate_instances, save_predictions
+from utils.utils import generate_wandb_objects3d
 from utils.seg import mean_iou, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks
-from models.metrics.utils import Evaluator, IoU_at_numClicks, NumClicks_for_IoU
+from models.metrics.utils import IoU_at_numClicks, NumClicks_for_IoU
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 
@@ -43,15 +43,14 @@ class ObjectSegmentation(pl.LightningModule):
         self.criterion = hydra.utils.instantiate(self.config.loss.criterion, weight_dict=weight_dict)
 
         # metrics
-        self.class_evaluator = hydra.utils.instantiate(config.metric)
-        self.last_seq = None
-
-        # self.validation_step_outputs = []
-        # self.training_step_outputs = []
         # TODO handle better the metric logger
-        self.metric_logger = utils.MetricLogger(delimiter="  ")
+        self.class_evaluator = hydra.utils.instantiate(config.metric)
+        self.validation_metric_logger = utils.MetricLogger(delimiter="  ")
+        self.training_metric_logger = utils.MetricLogger(delimiter="  ")
         self.iou_at_numClicks = IoU_at_numClicks()
         self.numClicks_for_IoU = NumClicks_for_IoU()
+        # self.validation_step_outputs = []
+        # self.training_step_outputs = []
 
         self.save_hyperparameters()
 
@@ -64,12 +63,12 @@ class ObjectSegmentation(pl.LightningModule):
 
         data, target = batch
 
-        coords = data.coordinates
-        raw_coords = data.raw_coordinates.to(self.device)
-        feats = data.features
-        labels = [l.to(self.device) for l in target["labels"]]
-        click_idx = data.click_idx
-        obj2label = [mapping[0] for mapping in data.obj2label]
+        coords = data["coordinates"]
+        raw_coords = data["raw_coordinates"]
+        feats = data["features"]
+        labels = target["labels"]
+        click_idx = data["click_idx"]
+        obj2label = [mapping[0] for mapping in target["obj2labels"]]
         batch_indicators = coords[:, 0]
         batch_size = batch_indicators.max() + 1
 
@@ -79,9 +78,10 @@ class ObjectSegmentation(pl.LightningModule):
         for idx in range(batch_size):
             if len(labels[idx].unique()) < 2:
                 # If there is only the background in the scene, skip the scene
+                print("after quntization, only background in the scene")
                 return None
 
-        data = ME.SparseTensor(coordinates=data.coordinates, features=feats, device=self.device)
+        data = ME.SparseTensor(coordinates=coords, features=feats, device=self.device)
         pcd_features, aux, coordinates, pos_encodings_pcd = self.interactive4d.forward_backbone(data, raw_coordinates=raw_coords)
 
         click_time_idx = copy.deepcopy(click_idx)
@@ -125,47 +125,51 @@ class ObjectSegmentation(pl.LightningModule):
         with torch.no_grad():
             pred_logits = outputs["pred_masks"]
             pred = [p.argmax(-1) for p in pred_logits]
-            general_miou = mean_iou(pred, labels, obj2label)
-            self.metric_logger.update(mIoU=general_miou)
-            self.metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
+            general_miou, label_miou_dict = mean_iou(pred, labels, obj2label)
+            label_miou_dict = {"trainer/" + k: v for k, v in label_miou_dict.items()}
+            self.log_dict(label_miou_dict, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
+            self.training_metric_logger.update(mIoU=general_miou)
+            self.training_metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
+
+        self.log("trainer/loss", losses, prog_bar=True, on_epoch=True, on_step=True, batch_size=batch_size, sync_dist=True)
+        self.log("trainer/mIoU", general_miou, prog_bar=True, on_epoch=True, on_step=True, batch_size=batch_size, sync_dist=True)
 
         # self.training_step_outputs.extend(losses)
 
-        self.log("train/loss", losses, prog_bar=True)
-        self.log("train/mIoU", general_miou, prog_bar=True)
-
         return losses
 
-    def on_training_epoch_end(self):
-        # TODO
-        train_stats = {k: meter.global_avg for k, meter in self.metric_logger.meters.items()}
-        self.log_dict({"lr_rate": train_stats["lr"]})
+    def on_train_epoch_end(self):
+        # if self.trainer.is_global_zero:
+        # self.all_gather(self.training_metric_logger)
+        train_stats = {k: meter.global_avg for k, meter in self.training_metric_logger.meters.items()}
         self.log_dict(
             {
-                "train/epoch": self.current_epoch,
-                "train/loss_epoch": train_stats["loss"],
-                "train/loss_bce_epoch": train_stats["loss_bce"],
-                "train/loss_dice_epoch": train_stats["loss_dice"],
-                "train/mIoU_epoch": train_stats["mIoU"],
+                "train_epoch_end/epoch": self.current_epoch,
+                "train_epoch_end/loss_epoch": train_stats["loss"],
+                "train_epoch_end/loss_bce_epoch": train_stats["loss_bce"],
+                "train_epoch_end/loss_dice_epoch": train_stats["loss_dice"],
+                "train_epoch_end/mIoU_epoch": train_stats["mIoU"],
             },
-            on_step=True,
+            sync_dist=True,
         )
-        print("Averaged stats:", self.metric_logger)
-        self.metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
+        self.log("mIoU_monitor", train_stats["mIoU"], sync_dist=True, logger=False)
+        print("\n")
+        print("Averaged stats:", self.training_metric_logger)
+        self.training_metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
 
     def validation_step(self, batch, batch_idx):
 
         data, target = batch
-
-        coords = data.coordinates
-        raw_coords = data.raw_coordinates.to(self.device)
-        feats = data.features
-        labels = [l.to(self.device) for l in target["labels"]]
-        labels_full = [torch.from_numpy(l).to(self.device) for l in target["labels_full"]]
-        click_idx = data.click_idx
-        inverse_maps = data.inverse_maps
-        # TODO: handle clicks in multiple sweep better (for now just picks the first clicks from the first scene
-        obj2label = [mapping[0] for mapping in data.obj2label]
+        scene_names = data["scene_names"]
+        coords = data["coordinates"]
+        raw_coords = data["raw_coordinates"]
+        feats = data["features"]
+        labels = target["labels"]
+        labels_full = [torch.from_numpy(l).to(coords) for l in target["labels_full"]]
+        click_idx = data["click_idx"]
+        inverse_maps = target["inverse_maps"]
+        # TODO: handle clicks in multiple sweep better (for now just picks the first clicks from the first scene)
+        obj2label = [mapping[0] for mapping in target["obj2labels"]]
         batch_indicators = coords[:, 0]
         num_obj = [len(mapping.keys()) for mapping in obj2label]
         batch_size = batch_indicators.max() + 1
@@ -179,6 +183,7 @@ class ObjectSegmentation(pl.LightningModule):
         for idx in range(batch_size):
             if len(labels[idx].unique()) < 2:
                 # If there is only the background in the scene, skip the scene
+                print("after quntization, only background in the scene")
                 return
 
         ###### interactive evaluation ######
@@ -186,10 +191,12 @@ class ObjectSegmentation(pl.LightningModule):
         pcd_features, aux, coordinates, pos_encodings_pcd = self.interactive4d.forward_backbone(data, raw_coordinates=raw_coords)
 
         # TODO: check how is the max_num_clicks update more than 1 batch size
+        iou_targets = [0.5, 0.65, 0.80, 0.85, 0.90, 9999]
         max_num_clicks = num_obj[0] * self.config.general.max_num_clicks
+        next_iou_target_indices = {idx: 0 for idx in range(batch_size)}
         while current_num_clicks <= max_num_clicks:
             if current_num_clicks == 0:
-                pred = [torch.zeros(l.shape).to(self.device) for l in labels]
+                pred = [torch.zeros(l.shape).to(coords) for l in labels]
             else:
                 outputs = self.interactive4d.forward_mask(
                     pcd_features,
@@ -214,9 +221,7 @@ class ObjectSegmentation(pl.LightningModule):
 
             updated_pred = []
 
-            next_iou_target_index = 0
-            iou_targets = [0.5, 0.65, 0.80, 0.85, 0.90, 9999]
-            for idx in range(batch_indicators.max() + 1):
+            for idx in range(batch_size):
                 sample_mask = batch_indicators == idx
                 sample_pred = pred[idx]
 
@@ -236,14 +241,14 @@ class ObjectSegmentation(pl.LightningModule):
                 # Logging IoU@1, IoU@3, IoU@5, IoU@10, IoU@15
                 average_clicks_per_obj = current_num_clicks / num_obj[idx]
                 if average_clicks_per_obj in [1, 3, 5, 10, 15]:
-                    self.iou_at_numClicks.update(iou=sample_iou.item(), number_of_clicks=average_clicks_per_obj)
+                    self.iou_at_numClicks.update(iou=sample_iou.item(), noc=average_clicks_per_obj)
 
                 # Logging NoC@50, NoC@65, NoC@80, NoC@85, NoC@90
-                if iou_targets[next_iou_target_index] < sample_iou:
-                    while iou_targets[next_iou_target_index] < sample_iou:
-                        self.numClicks_for_IoU.update(iou=iou_targets[next_iou_target_index], noc=average_clicks_per_obj)
-                        next_iou_target_index += 1
-                        if next_iou_target_index == len(iou_targets) - 1:  # 9999 (impossible value) is the last element
+                if iou_targets[next_iou_target_indices[idx]] < sample_iou:
+                    while iou_targets[next_iou_target_indices[idx]] < sample_iou:
+                        self.numClicks_for_IoU.update(iou=iou_targets[next_iou_target_indices[idx]], noc=average_clicks_per_obj)
+                        next_iou_target_indices[idx] += 1
+                        if next_iou_target_indices[idx] == len(iou_targets) - 1:
                             break
 
                 new_clicks, new_clicks_num, new_click_pos, new_click_time = get_simulated_clicks(
@@ -257,9 +262,11 @@ class ObjectSegmentation(pl.LightningModule):
                     )
 
             if current_num_clicks != 0:
-                general_miou = mean_iou(updated_pred, labels, obj2label)
-                self.metric_logger.update(mIoU=general_miou)
-                self.metric_logger.update(
+                general_miou, label_miou_dict = mean_iou(updated_pred, labels, obj2label)
+                label_miou_dict = {"validation/" + k: v for k, v in label_miou_dict.items()}
+                self.log_dict(label_miou_dict, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
+                self.validation_metric_logger.update(mIoU=general_miou)
+                self.validation_metric_logger.update(
                     loss=sum(loss_dict_reduced_scaled.values()),
                     **loss_dict_reduced_scaled,
                     **loss_dict_reduced_unscaled,
@@ -272,85 +279,112 @@ class ObjectSegmentation(pl.LightningModule):
             current_num_clicks += new_clicks_num
 
         pred = 0
+
+        if self.trainer.is_global_zero and batch_idx % 500 == 0:  # Condition for visualization logging
+            # choose a random scene to visualize from the batch
+            chosen_scene_idx = random.randint(0, batch_size - 1)
+            scene_name = scene_names[chosen_scene_idx]
+            sample_mask = batch_indicators == chosen_scene_idx
+            sample_raw_coords = raw_coords[sample_mask]
+            sample_pred = updated_pred[chosen_scene_idx]
+            sample_labels = labels[chosen_scene_idx]
+            sample_click_idx = click_idx[chosen_scene_idx]
+
+            gt_scene, pred_scene = generate_wandb_objects3d(sample_raw_coords, sample_labels, sample_pred, sample_click_idx)
+            wandb.log({f"point_scene/ground_truth_{scene_name}_{batch_idx}": gt_scene})
+            wandb.log({f"point_scene/prediction_{scene_name}_{batch_idx}": pred_scene})
+            # self.config.general.visualization_dir,
         # self.validation_step_outputs.append(pred)
 
     def on_validation_epoch_end(self):
-        # TODO
-        print("--------- Evaluating Validation Performance  -----------")
-        # all_metrics = torch.stack(self.validation_step_outputs)
-        # evaluator = Evaluator(all_metrics)
-        # results_dict = evaluator.eval_results()
-        # print("****************************")
-        warnings.filterwarnings(
-            "ignore",
-            message="The ``compute`` method of metric NumClicks_for_IoU was called before the ``update`` method",
-            category=UserWarning,
-        )
-        results_dict = {}
-        results_dict["mIoU"] = self.metric_logger.meters["mIoU"].global_avg
-        metrics_dictionary, iou_thresholds = self.numClicks_for_IoU.compute()
-        for iou in iou_thresholds:
-            noc = metrics_dictionary[iou]["noc"]
-            count = metrics_dictionary[iou]["count"]
-            results_dict[f"scenes_reached_{iou}_iou"] = count.item()
-            if count == 0:
-                results_dict[f"NoC@{iou}"] = 0  # or return a default value or raise an error
-            else:
-                results_dict[f"NoC@{iou}"] = (noc / count).item()
+        if self.trainer.is_global_zero:
+            # self.all_gather(self.validation_outputs)
+            print("\n")
+            print("--------- Evaluating Validation Performance  -----------")
+            warnings.filterwarnings(
+                "ignore",
+                message="The ``compute`` method of metric NumClicks_for_IoU was called before the ``update`` method",
+                category=UserWarning,
+            )
+            results_dict = {}
+            results_dict["mIoU"] = self.validation_metric_logger.meters["mIoU"].global_avg
 
-        iou_sums, counts = self.iou_at_numClicks.compute()
-        results_dict["IoU@1"] = (iou_sums[0] / counts[0]).item()
-        results_dict["IoU@3"] = (iou_sums[1] / counts[1]).item()
-        results_dict["IoU@5"] = (iou_sums[2] / counts[2]).item()
-        results_dict["IoU@10"] = (iou_sums[3] / counts[3]).item()
-        # results_dict["IoU@15"] = (iou_sums[4] / counts[4]).item()
-        print(results_dict)
-        stats = {k: meter.global_avg for k, meter in self.metric_logger.meters.items()}
-        stats.update(results_dict)
+            # Evaluate the NoC@IoU Metric
+            metrics_dictionary, iou_thresholds = self.numClicks_for_IoU.compute()
+            for iou in iou_thresholds:
+                noc = metrics_dictionary[iou]["noc"]
+                count = metrics_dictionary[iou]["count"]
+                results_dict[f"scenes_reached_{iou}_iou"] = count.item()
+                if count == 0:
+                    results_dict[f"NoC@{iou}"] = 0  # or return a default value or raise an error
+                else:
+                    results_dict[f"NoC@{iou}"] = (noc / count).item()
 
-        # self.validation_step_outputs.clear()  # free memory
-        self.metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
+            # Evaluate the IoU@NoC Metric
+            metrics_dictionary, evaluated_num_clicks = self.iou_at_numClicks.compute()
+            for noc in evaluated_num_clicks:
+                iou = metrics_dictionary[noc]["iou"]
+                count = metrics_dictionary[noc]["count"]
+                if count == 0:
+                    results_dict[f"IoU@{noc}"] = 0  # or return a default value or raise an error
+                else:
+                    results_dict[f"IoU@{noc}"] = (iou / count).item()
 
-        self.log_dict(
-            {
-                "val/epoch": self.current_epoch,
-                "val/loss_epoch": stats["loss"],
-                "val/loss_bce_epoch": stats["loss_bce"],
-                "val/loss_dice_epoch": stats["loss_dice"],
-                "val/mIoU_epoch": stats["mIoU"],
-                "val_metrics/NoC_50": stats["NoC@50"],
-                "val_metrics/NoC_50": stats["scenes_reached_50_iou"],
-                "val_metrics/NoC_65": stats["NoC@65"],
-                "val_metrics/NoC_65": stats["scenes_reached_65_iou"],
-                "val_metrics/NoC_80": stats["NoC@80"],
-                "val_metrics/NoC_80": stats["scenes_reached_80_iou"],
-                "val_metrics/NoC_85": stats["NoC@85"],
-                "val_metrics/NoC_85": stats["scenes_reached_85_iou"],
-                "val_metrics/NoC_90": stats["NoC@90"],
-                "val_metrics/NoC_90": stats["scenes_reached_90_iou"],
-                "val_metrics/IoU_1": stats["IoU@1"],
-                "val_metrics/IoU_3": stats["IoU@3"],
-                "val_metrics/IoU_5": stats["IoU@5"],
-                "val_metrics/IoU_10": stats["IoU@10"],
-                # "val_metrics/IoU_15": stats["IoU@15"],
-            }
-        )
-        self.log("mIoU", stats["mIoU"])
+            print("\n")
+            print(results_dict)
+            stats = {k: meter.global_avg for k, meter in self.validation_metric_logger.meters.items()}
+            stats.update(results_dict)
+
+            # self.validation_step_outputs.clear()  # free memory
+            self.validation_metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
+
+            self.log_dict(
+                {
+                    "validation/epoch": self.current_epoch,
+                    "validation/loss_epoch": stats["loss"],
+                    "validation/loss_bce_epoch": stats["loss_bce"],
+                    "validation/loss_dice_epoch": stats["loss_dice"],
+                    "validation/mIoU_epoch": stats["mIoU"],
+                    "validation/Interactive_metrics/NoC_50": stats["NoC@50"],
+                    "validation/Interactive_metrics/NoC_50": stats["scenes_reached_50_iou"],
+                    "validation/Interactive_metrics/NoC_65": stats["NoC@65"],
+                    "validation/Interactive_metrics/NoC_65": stats["scenes_reached_65_iou"],
+                    "validation/Interactive_metrics/NoC_80": stats["NoC@80"],
+                    "validation/Interactive_metrics/NoC_80": stats["scenes_reached_80_iou"],
+                    "validation/Interactive_metrics/NoC_85": stats["NoC@85"],
+                    "validation/Interactive_metrics/NoC_85": stats["scenes_reached_85_iou"],
+                    "validation/Interactive_metrics/NoC_90": stats["NoC@90"],
+                    "validation/Interactive_metrics/NoC_90": stats["scenes_reached_90_iou"],
+                    "validation/Interactive_metrics/IoU_1": stats["IoU@1"],
+                    "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
+                    "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
+                    "validation/Interactive_metrics/IoU_10": stats["IoU@10"],
+                    # "val_metrics/IoU_15": stats["IoU@15"],
+                },
+                sync_dist=True,
+            )
+        self.time_since_last_visualization = 0
 
     def test_step(self, batch, batch_idx):
         # TODO
         pass
 
     def test_epoch_end(self, outputs):
+        # TODO
         return {}
 
     def configure_optimizers(self):
+        # Adjust the learning rate based on the number of GPUs
+        # self.config.optimizer.lr = self.config.optimizer.lr * math.sqrt(self.trainer.num_devices)
+        # self.config.scheduler.scheduler.max_lr = self.config.optimizer.lr
+
         optimizer = hydra.utils.instantiate(self.config.optimizer, params=self.parameters())
         if "steps_per_epoch" in self.config.scheduler.scheduler.keys():
-            self.config.scheduler.scheduler.steps_per_epoch = len(self.train_dataloader())
+            self.config.scheduler.scheduler.steps_per_epoch = math.ceil(len(self.train_dataloader()) * self.trainer.num_devices)
         lr_scheduler = hydra.utils.instantiate(self.config.scheduler.scheduler, optimizer=optimizer)
         scheduler_config = {"scheduler": lr_scheduler}
         scheduler_config.update(self.config.scheduler.pytorch_lightning_params)
+        print(f"optimizer_max_lr: {self.config.optimizer.lr}, steps_per_epoch:{self.config.scheduler.scheduler.steps_per_epoch}")
         return [optimizer], [scheduler_config]
 
     def setup(self, stage):
@@ -359,6 +393,15 @@ class ObjectSegmentation(pl.LightningModule):
         # self.test_dataset = hydra.utils.instantiate(self.config.data.test_dataset)
 
     def train_dataloader(self):
+        self.config.data.train_dataloader.batch_size = int(
+            self.config.data.train_dataloader.batch_size / self.trainer.num_devices
+        )
+        self.config.data.train_dataloader.num_workers = int(
+            self.config.data.train_dataloader.num_workers / self.trainer.num_devices
+        )
+        print(
+            f"train_dataloader - batch_size: {self.config.data.train_dataloader.batch_size}, effective_batch_size: {self.config.data.train_dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.train_dataloader.num_workers}"
+        )
         c_fn = hydra.utils.instantiate(self.config.data.train_collation)
         return hydra.utils.instantiate(
             self.config.data.train_dataloader,
@@ -367,6 +410,15 @@ class ObjectSegmentation(pl.LightningModule):
         )
 
     def val_dataloader(self):
+        self.config.data.validation_dataloader.num_workers = (
+            self.config.data.validation_dataloader.num_workers / self.trainer.num_devices
+        )
+        self.config.data.validation_dataloader.batch_size = (
+            self.config.data.validation_dataloader.batch_size / self.trainer.num_devices
+        )
+        print(
+            f"val_dataloader - batch_size: {self.config.optimizer.lr}, effective_batch_size: {self.config.data.train_dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.train_dataloader.num_workers}"
+        )
         c_fn = hydra.utils.instantiate(self.config.data.validation_collation)
         return hydra.utils.instantiate(
             self.config.data.validation_dataloader,
@@ -375,12 +427,7 @@ class ObjectSegmentation(pl.LightningModule):
         )
 
     def test_dataloader(self):
-        c_fn = hydra.utils.instantiate(self.config.data.test_collation)
-        return hydra.utils.instantiate(
-            self.config.data.test_dataloader,
-            self.test_dataset,
-            collate_fn=c_fn,
-        )
+        return None
 
     def pre_interactive_sampling(
         self,
@@ -394,8 +441,12 @@ class ObjectSegmentation(pl.LightningModule):
         click_idx,
         click_time_idx,
     ):
+        batch_size = batch_indicators.max() + 1
         current_num_iter = 0
-        num_forward_iters = random.randint(0, 19)
+        num_forward_iters = random.randint(0, self.config.general.max_num_clicks - 1)
+        # self.log(
+        #     "trainer/forward_iterations", num_forward_iters, prog_bar=True, on_epoch=False, on_step=True, batch_size=batch_size
+        # )
 
         with torch.no_grad():
             self.interactive4d.eval()
@@ -415,7 +466,7 @@ class ObjectSegmentation(pl.LightningModule):
                     pred_logits = outputs["pred_masks"]
                     pred = [p.argmax(-1) for p in pred_logits]
 
-                for idx in range(batch_indicators.max() + 1):
+                for idx in range(batch_size):
                     sample_mask = batch_indicators == idx
                     sample_pred = pred[idx]
 

@@ -1,12 +1,14 @@
 # @package _group_
 - _target_: pytorch_lightning.callbacks.ModelCheckpoint
-  monitor: mIoU
-  # monitor: val_mean_lstq
-  save_last: true
+  verbose: true
   save_top_k: 1
-  mode: max
+  save_last: true
+  monitor: "mIoU_monitor"
+  mode: "max"
   dirpath: ${general.save_dir}
-  filename: "{epoch}-{val_mean_lstq:.3f}"
   every_n_epochs: 1
+  filename: "{epoch:02d}-{mIoU_monitor:.3f}"
+  enable_version_counter: false
+  save_on_train_epoch_end: true
 
 - _target_: pytorch_lightning.callbacks.LearningRateMonitor

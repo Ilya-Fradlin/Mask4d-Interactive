@@ -5,7 +5,7 @@ import torch
 from dotenv import load_dotenv
 from omegaconf import DictConfig, OmegaConf
 from trainer.trainer import ObjectSegmentation
-from utils.utils import flatten_dict, RegularCheckpointing
+from utils.utils import flatten_dict
 from pytorch_lightning import Trainer, seed_everything
 
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -48,30 +48,28 @@ def train(cfg: DictConfig):
     for cb in cfg.callbacks:
         callbacks.append(hydra.utils.instantiate(cb))
 
-    # callbacks.append(RegularCheckpointing())
-    # torch.use_deterministic_algorithms(True)
-    callbacks.append(
-        ModelCheckpoint(
-            monitor="mIoU",
-            dirpath=cfg.general.save_dir,
-            filename="last-epoch.ckpt",
-            every_n_epochs=1,
-            # filename="last-epoch-{epoch:02d}-{mIoU:.2f}"
-        )
-    )
     runner = Trainer(
         logger=loggers,
         callbacks=callbacks,
         default_root_dir=str(cfg.general.save_dir),
-        log_every_n_steps=50,
         profiler="simple",
         devices="auto",
         accelerator="gpu",
         strategy="ddp",
         **cfg.trainer,
+        # debugging options
+        # detect_anomaly=True,
+        # num_sanity_val_steps=0,
+        # log_every_n_steps=1,
+        # max_epochs=30,
+        # check_val_every_n_epoch=1,
+        # limit_train_batches=0.0002,
+        # limit_val_batches=0.001,
     )
     runner.fit(model)
-    # runner.fit(model, ckpt_path="/home/fradlin/Github/Mask4D-Interactive/saved/2024-04-30_071910/last-epoch.ckpt")
+    # runner.fit(
+    #     model, ckpt_path="/home/fradlin/Github/Mask4D-Interactive/saved/2024-05-03_101924/epoch=14-val_mean_lstq=0.000.ckpt"
+    # )
 
 
 @hydra.main(config_path="conf", config_name="config_panoptic_4d.yaml")

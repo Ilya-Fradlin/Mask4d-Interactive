@@ -8,6 +8,7 @@ general:
   dbscan_eps: null
   experiment_name: ${now:%Y-%m-%d_%H%M%S}
   save_dir: saved/${general.experiment_name}
+  visualization_dir: saved/${general.experiment_name}/pointclouds
   gpus: 1
   max_num_clicks: 10
 

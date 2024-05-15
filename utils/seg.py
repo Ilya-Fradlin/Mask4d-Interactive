@@ -19,10 +19,35 @@ def mean_iou_single(pred, labels):
 
 def mean_iou(pred, labels, obj2label):
     """Calculate the mean IoU for a batch"""
+
     assert len(pred) == len(labels)
     bs = len(pred)
     iou_batch = 0.0
-
+    label_mapping = {
+        0: "unlabeled",
+        1: "car",
+        2: "bicycle",
+        3: "motorcycle",
+        4: "truck",
+        5: "other-vehicle",
+        6: "person",
+        7: "bicyclist",
+        8: "motorcyclist",
+        9: "road",
+        10: "parking",
+        11: "sidewalk",
+        12: "other-ground",
+        13: "building",
+        14: "fence",
+        15: "vegetation",
+        16: "trunk",
+        17: "terrain",
+        18: "pole",
+        19: "traffic-sign",
+    }
+    iou_per_label = {}  # Initialize IoU for the entire batch
+    for label_name in label_mapping.values():
+        iou_per_label[label_name] = []
     for b in range(bs):
         pred_sample = pred[b]
         labels_sample = labels[b]
@@ -31,16 +56,24 @@ def mean_iou(pred, labels, obj2label):
         obj_num = len(obj_ids)
         iou_sample = 0.0
         for obj_id in obj_ids:
+            original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] & 0xFFFF]
             obj_iou = mean_iou_single(pred_sample == obj_id, labels_sample == obj_id)
             iou_sample += obj_iou
+            # Accumulate IoU for each original label
+            iou_per_label[original_label].append(obj_iou)
 
         iou_sample /= obj_num
         iou_batch += iou_sample
 
     iou_batch /= bs
 
-    # return iou_batch, things_iou_batch, stuff_iou_batch
-    return iou_batch
+    # Aggregate iou_per_label across batches
+    average_iou_per_label = {
+        label_name: sum(iou_list) / len(iou_list) if iou_list else None for label_name, iou_list in iou_per_label.items()
+    }
+    average_iou_per_label = {"miou_class/" + k: v for k, v in average_iou_per_label.items() if v is not None}
+
+    return iou_batch, average_iou_per_label
 
 
 def mean_iou_scene(pred, labels):

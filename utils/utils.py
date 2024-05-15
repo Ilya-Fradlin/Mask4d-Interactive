@@ -1,10 +1,9 @@
-import numpy as np
 import torch
-from scipy.optimize import linear_sum_assignment
 import sys
-import pytorch_lightning as pl
-from pathlib import Path
-import os
+import wandb
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+
 
 if sys.version_info[:2] >= (3, 8):
     from collections.abc import MutableMapping
@@ -24,13 +23,6 @@ def flatten_dict(d, parent_key="", sep="_"):
         else:
             items.append((new_key, v))
     return dict(items)
-
-
-class RegularCheckpointing(pl.Callback):
-    def on_train_epoch_end(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"):
-        general = pl_module.config.general
-        trainer.save_checkpoint(f"{general.save_dir}/last-epoch.ckpt")
-        print("Checkpoint created")
 
 
 def associate_instances(previous_ins_label, current_ins_label):
@@ -68,34 +60,49 @@ def associate_instances(previous_ins_label, current_ins_label):
     return associations
 
 
-def save_predictions(sem_preds, ins_preds, seq_name, sweep_name):
-    filename = Path("/globalwork/yilmaz/submission/sequences") / seq_name / "predictions"
-    # assert not filename.exists(), "Path exists"
-    filename.mkdir(parents=True, exist_ok=True)
-    learning_map_inv = {
-        1: 10,  # "car"
-        2: 11,  # "bicycle"
-        3: 15,  # "motorcycle"
-        4: 18,  # "truck"
-        5: 20,  # "other-vehicle"
-        6: 30,  # "person"
-        7: 31,  # "bicyclist"
-        8: 32,  # "motorcyclist"
-        9: 40,  # "road"
-        10: 44,  # "parking"
-        11: 48,  # "sidewalk"
-        12: 49,  # "other-ground"
-        13: 50,  # "building"
-        14: 51,  # "fence"
-        15: 70,  # "vegetation"
-        16: 71,  # "trunk"
-        17: 72,  # "terrain"
-        18: 80,  # "pole"
-        19: 81,  # "traffic-sign"
-    }
-    sem_preds = np.vectorize(learning_map_inv.__getitem__)(sem_preds)
-    panoptic_preds = (ins_preds << 16) + sem_preds
-    file_path = str(filename / sweep_name) + ".label"
-    if not os.path.exists(file_path):
-        with open(file_path, "wb") as f:
-            f.write(panoptic_preds.astype(np.uint32).tobytes())
+# Function to calculate all 8 corners of the bounding box
+def calculate_bounding_box_corners(min_x, max_x, min_y, max_y, min_z, max_z):
+    corners = []
+    for x in (min_x, max_x):
+        for y in (min_y, max_y):
+            for z in (min_z, max_z):
+                corners.append([x, y, z])
+    return corners
+
+
+def generate_wandb_objects3d(raw_coords, labels, pred, click_idx):
+    # Add a new dimension to labels
+    labels = torch.unsqueeze(labels, dim=1)
+    pred = torch.unsqueeze(pred, dim=1)
+    # Stack the tensors along the second dimension
+    pcd_gt = torch.cat((raw_coords, labels), dim=1).cpu().numpy()
+    pcd_pred = torch.cat((raw_coords, pred), dim=1).cpu().numpy()
+    # Convert the 4th column to integers and add +1 for wandb class range
+    pcd_gt[:, 3] = pcd_gt[:, 3].astype(int) + 1
+    pcd_pred[:, 3] = pcd_pred[:, 3].astype(int) + 1
+
+    ####################################################################################
+    ############### Get the Predicted and clicks as small Bounding Boxes ###############
+    ####################################################################################
+    boxes_array = []
+    # Iterate over each object in sample_click_idx
+    for obj, click_indices in click_idx.items():
+        # Extract click points from numpy_array
+        click_points = pcd_pred[click_indices]
+        # Calculate bounding box coordinates
+        for click in click_points:
+            min_x, max_x = click[0] - 0.1, click[0] + 0.1
+            min_y, max_y = click[1] - 0.1, click[1] + 0.1
+            min_z, max_z = click[2] - 0.1, click[2] + 0.1
+
+            current_box_click = {
+                "corners": calculate_bounding_box_corners(min_x, max_x, min_y, max_y, min_z, max_z),
+                "label": f"obj_{obj}",
+                "color": [123, 321, 111],
+            }
+            boxes_array.append(current_box_click)
+
+    gt_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_gt})
+    pred_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_pred, "boxes": np.array(boxes_array)})
+
+    return gt_scene, pred_scene

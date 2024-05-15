@@ -20,8 +20,8 @@ export CUDA_LAUNCH_BLOCKING=1
 # NUM_ITERATIONS=${10}
 # STEPS=${11}
 
-# sbatch --partition=trtx-lo -c 4 --gres=gpu:1 --mem=24G --job-name=train_agile3d --time=6-00:00:00 \
-# --signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/output_%j.txt train_multi_scannet40.sh
-
 sbatch --partition=a40-lo -c 16 --gres=gpu:1 --mem=48G --job-name=interactive4d_training --time=8-00:00:00 \
---signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_training_full_1gpu.txt scripts/train.sh
+--signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_1gpu_max10clicks.txt scripts/train.sh
+
+sbatch --partition=a40-lo -c 32 --gres=gpu:2 --ntasks-per-node=2 --mem=96G --job-name=multi_training --time=10-00:00:00 \
+--signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_2gpu_max10clicks.txt scripts/train.sh
