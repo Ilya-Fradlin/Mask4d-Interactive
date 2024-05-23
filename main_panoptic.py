@@ -22,16 +22,27 @@ def get_parameters(cfg: DictConfig):
     cfg.general.gpus = torch.cuda.device_count()
     loggers = []
 
-    if not os.path.exists(cfg.general.save_dir):
-        os.makedirs(cfg.general.save_dir)
+    if cfg.general.experiment_name == "debugging":
+        # Add debugging options + No logging
+        cfg.callbacks = [cfg.callbacks[0]]
+        cfg.trainer.detect_anomaly = True
+        cfg.trainer.num_sanity_val_steps = 0
+        cfg.trainer.log_every_n_steps = 1
+        cfg.trainer.max_epochs = 30
+        cfg.trainer.check_val_every_n_epoch = 1
+        cfg.trainer.limit_train_batches = 0.0002
+        cfg.trainer.limit_val_batches = 0.0005
     else:
-        print("EXPERIMENT ALREADY EXIST")
-        cfg.general.ckpt_path = f"{cfg.general.save_dir}/last-epoch.ckpt"
+        if not os.path.exists(cfg.general.save_dir):
+            os.makedirs(cfg.general.save_dir)
+        else:
+            print("EXPERIMENT ALREADY EXIST")
+            cfg.general.ckpt_path = f"{cfg.general.save_dir}/last-epoch.ckpt"
 
-    for log in cfg.logging:
-        print(log)
-        loggers.append(hydra.utils.instantiate(log))
-        loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
+        for log in cfg.logging:
+            print(log)
+            loggers.append(hydra.utils.instantiate(log))
+            loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
 
     model = ObjectSegmentation(cfg)
 
@@ -44,29 +55,16 @@ def train(cfg: DictConfig):
     os.chdir(hydra.utils.get_original_cwd())
     cfg, model, loggers = get_parameters(cfg)
     callbacks = []
-    for cb in cfg.callbacks:
-        callbacks.append(hydra.utils.instantiate(cb))
+    if cfg.callbacks is not None:
+        for cb in cfg.callbacks:
+            callbacks.append(hydra.utils.instantiate(cb))
 
     runner = Trainer(
-        logger=loggers,
         callbacks=callbacks,
-        default_root_dir=str(cfg.general.save_dir),
-        profiler="simple",
-        devices="auto",
-        accelerator="gpu",
-        strategy="ddp",
+        logger=loggers,
         **cfg.trainer,
-        # debugging options
-        # detect_anomaly=True,
-        # num_sanity_val_steps=0,
-        # log_every_n_steps=1,
-        # max_epochs=30,
-        # check_val_every_n_epoch=1,
-        # limit_train_batches=0.0002,
-        # limit_val_batches=0.0005,
     )
-    # runner.fit(model)
-    runner.fit(model, ckpt_path="/home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt")
+    runner.fit(model, ckpt_path=cfg.general.ckpt_path)
 
 
 @hydra.main(config_path="conf", config_name="config_panoptic_4d.yaml")

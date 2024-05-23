@@ -21,6 +21,7 @@ class LidarDataset(Dataset):
         instance_population: Optional[int] = 0,
         sweep: Optional[int] = 1,
         segment_full_scene=True,
+        obj_type="all",
     ):
         super(LidarDataset, self).__init__()
 
@@ -31,6 +32,7 @@ class LidarDataset(Dataset):
         self.instance_population = instance_population
         self.sweep = sweep
         self.segment_full_scene = segment_full_scene
+        self.obj_type = obj_type
         self.config = self._load_yaml("conf/semantic-kitti.yaml")
 
         # loading database file
@@ -176,6 +178,11 @@ class LidarDataset(Dataset):
         obj2label_map = {}
         click_idx = {}
         if "validation" in self.mode and not self.segment_full_scene:
+            if self.obj_type != "all":
+                # we need to keep only the things or only the stuff
+                scan["clicks"], scan["obj"] = self.select_only_desired_objects_subsampled(
+                    self.obj_type, scan["obj"], scan["clicks"]
+                )
             obj_labels = np.zeros(panoptic_labels.shape)
             for obj_idx, label in scan["obj"].items():
                 obj_labels[panoptic_labels == label] = int(obj_idx)
@@ -186,10 +193,8 @@ class LidarDataset(Dataset):
             # no pre-defined object selected, choose random objects
             obj_labels = np.zeros(panoptic_labels.shape)
             unique_panoptic_labels = scan["unique_panoptic_labels"]
-            # unique_panoptic_labels = np.unique(panoptic_labels)
-            # drop unlabeled points from the unique labels
-            # unique_panoptic_labels = unique_panoptic_labels[unique_panoptic_labels != 0]
-            # unique_panoptic_labels = unique_panoptic_labels.tolist()
+            if self.obj_type != "all":
+                unique_panoptic_labels = self.select_only_desired_objects(self.obj_type, unique_panoptic_labels)
 
             max_num_obj = len(unique_panoptic_labels)
             if self.segment_full_scene:
@@ -210,6 +215,29 @@ class LidarDataset(Dataset):
             raise ValueError(f"{self.mode} should not be used generate_object_labels")
 
         return obj_labels, obj2label_map, click_idx
+
+    def select_only_desired_objects(self, obj_type, unique_panoptic_labels):
+        things_labels = [label for label in unique_panoptic_labels if label >> 16 != 0]
+        stuff_labels = [label for label in unique_panoptic_labels if label >> 16 == 0]
+        desired_objects = {"things": things_labels, "stuff": stuff_labels}.get(obj_type)
+        if desired_objects is None:
+            raise ValueError(f"Unknown obj_type {obj_type}")
+        return desired_objects
+
+    def select_only_desired_objects_subsampled(self, obj_type, selected_obj):
+        click_idx = {}
+        updated_obj = {}
+        obj_idx = 1  # 0 is background
+        for label in selected_obj.values():
+            instance_id = label >> 16
+            if (obj_type == "things" and instance_id != 0) or (obj_type == "stuff" and instance_id == 0):
+                updated_obj[str(obj_idx)] = label
+                click_idx[str(obj_idx)] = []
+                obj_idx += 1
+        # Background
+        click_idx["0"] = []
+
+        return click_idx, updated_obj
 
     def augment(self, point_cloud):
         if np.random.random() > 0.5:

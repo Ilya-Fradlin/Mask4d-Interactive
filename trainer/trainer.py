@@ -283,7 +283,9 @@ class ObjectSegmentation(pl.LightningModule):
 
         pred = 0
 
-        if self.trainer.is_global_zero and batch_idx % 500 == 0:  # Condition for visualization logging
+        if (
+            (self.config.general.experiment_name != "debugging") and (self.trainer.is_global_zero) and (batch_idx % 500 == 0)
+        ):  # Condition for visualization logging
             # choose a random scene to visualize from the batch
             chosen_scene_idx = random.randint(0, batch_size - 1)
             scene_name = scene_names[chosen_scene_idx]

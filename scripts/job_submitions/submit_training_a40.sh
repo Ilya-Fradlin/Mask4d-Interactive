@@ -21,7 +21,7 @@ export NCCL_SOCKET_IFNAME=en,eth,em,bond
 export CUDA_LAUNCH_BLOCKING=1
 
 sbatch --partition=a40-lo -c 16 --gres=gpu:1 --mem=48G --job-name=interactive4d --time=10-00:00:00 \
---signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_5clicks_fullscene_1gpu.txt scripts/train.sh
+--signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_5clicks_full_things_1gpu.txt scripts/train.sh
 
 sbatch --partition=a40-lo -c 32 --gres=gpu:2 --ntasks-per-node=2 --mem=96G --job-name=multi_training --time=10-00:00:00 \
 --signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_2gpu_max10clicks.txt scripts/train.sh

@@ -3,5 +3,5 @@
   project: ${general.project_name}
   name: ${general.experiment_name}
   save_dir: ${general.save_dir}
-  entity: "ilyafr97"
+  entity: "rwth-data-science"
   id: ${general.experiment_name}

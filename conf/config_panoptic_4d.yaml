@@ -2,12 +2,12 @@ general:
   mode: "train"
   gpus: null
   seed: null
-  ckpt_path: null
-  project_name: mask4d
-  workspace: ilyafr97
+  ckpt_path: null # i.e. /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt
+  project_name: Mask4D-Interactive
+  workspace: Ilyafr97
   instance_population: 20
   dbscan_eps: null
-  experiment_name: ${now:%Y-%m-%d_%H%M%S}
+  experiment_name: ${now:%Y-%m-%d_%H%M%S}-obj_type_${data.obj_type}-obj_count_${data.sample_choice}-max${general.max_num_clicks}clicks
   save_dir: saved/${general.experiment_name}
   visualization_dir: saved/${general.experiment_name}/pointclouds
   max_num_clicks: 5

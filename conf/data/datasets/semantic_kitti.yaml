@@ -6,6 +6,7 @@ train_dataset:
   add_distance: ${data.add_distance}
   sweep: ${data.sweep}
   segment_full_scene: ${data.segment_full_scene}
+  obj_type: ${data.obj_type}
   sample_choice: ${data.sample_choice}
   instance_population: 0 # ${data.instance_population}
   ignore_label: ${data.ignore_label}
@@ -17,6 +18,8 @@ validation_dataset:
   mode: ${data.validation_mode}
   add_distance: ${data.add_distance}
   sweep: ${data.sweep}
+  segment_full_scene: ${data.segment_full_scene}
+  obj_type: ${data.obj_type}
   sample_choice: ${data.sample_choice}
   instance_population: 0
   ignore_label: ${data.ignore_label}
