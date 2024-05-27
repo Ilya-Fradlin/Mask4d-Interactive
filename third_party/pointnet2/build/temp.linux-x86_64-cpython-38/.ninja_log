@@ -1,0 +1,10 @@
+# ninja log v5
+7	68248	1708413007748216842	/home/fradlin/Github/Mask4D/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/ball_query_gpu.o	69c122a1c3cf6bf7
+8	68783	1708413008292189297	/home/fradlin/Github/Mask4D/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/group_points_gpu.o	48592c040a63e88
+9	75646	1708413015155841753	/home/fradlin/Github/Mask4D/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/interpolate_gpu.o	dea30afde71b2aa6
+11	76268	1708413015779810158	/home/fradlin/Github/Mask4D/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/sampling_gpu.o	74cc153960f30d51
+6	78413	1708413017879703830	/home/fradlin/Github/Mask4D/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/ball_query.o	691284c8a5ffd79a
+9	82206	1708413021687511027	/home/fradlin/Github/Mask4D/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/interpolate.o	3a82a45ff52fb3e2
+8	85064	1708413024551366013	/home/fradlin/Github/Mask4D/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/group_points.o	af98158ecff1d895
+10	88522	1708413028011190822	/home/fradlin/Github/Mask4D/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/sampling.o	c34923e10e880a64
+7	89503	1708413028991141202	/home/fradlin/Github/Mask4D/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/bindings.o	9fa548f1236701aa

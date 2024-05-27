@@ -6,6 +6,6 @@
 .python-version
 __pycache__/
 *.out
-third_party/
 /outputs/*
 *.pcd
+# third_party/
