@@ -22,7 +22,7 @@ def get_parameters(cfg: DictConfig):
     cfg.general.gpus = torch.cuda.device_count()
     loggers = []
 
-    if cfg.general.experiment_name == "debugging":
+    if "debugging" in cfg.general.experiment_name:
         # Add debugging options + No logging
         cfg.callbacks = [cfg.callbacks[0]]
         cfg.trainer.detect_anomaly = True
@@ -32,6 +32,14 @@ def get_parameters(cfg: DictConfig):
         cfg.trainer.check_val_every_n_epoch = 1
         cfg.trainer.limit_train_batches = 0.0002
         cfg.trainer.limit_val_batches = 0.0005
+
+        if cfg.general.experiment_name == "debugging-with-logging":
+            cfg.general.visualization_frequency = 1
+            for log in cfg.logging:
+                print(log)
+                loggers.append(hydra.utils.instantiate(log))
+                loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
+
     else:
         if not os.path.exists(cfg.general.save_dir):
             os.makedirs(cfg.general.save_dir)

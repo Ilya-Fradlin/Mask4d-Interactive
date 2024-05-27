@@ -110,15 +110,15 @@ def generate_wandb_objects3d(raw_coords, labels, pred, click_idx):
         # Extract click points from numpy_array
         click_points = pcd_pred[click_indices]
         # Calculate bounding box coordinates
-        for click in click_points:
+        for i, click in enumerate(click_points):
             min_x, max_x = click[0] - 0.1, click[0] + 0.1
             min_y, max_y = click[1] - 0.1, click[1] + 0.1
             min_z, max_z = click[2] - 0.1, click[2] + 0.1
 
             current_box_click = {
                 "corners": calculate_bounding_box_corners(min_x, max_x, min_y, max_y, min_z, max_z),
-                "label": f"obj_{obj}",
-                "color": [123, 321, 111],
+                "label": f"obj_{obj}_click_{i}",
+                "color": [255, 0, 255],
             }
             boxes_array.append(current_box_click)
 

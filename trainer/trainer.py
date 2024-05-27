@@ -254,7 +254,12 @@ class ObjectSegmentation(pl.LightningModule):
                             break
 
                 new_clicks, new_clicks_num, new_click_pos, new_click_time = get_simulated_clicks(
-                    sample_pred, sample_labels, sample_raw_coords, current_num_clicks, training=False
+                    sample_pred,
+                    sample_labels,
+                    sample_raw_coords,
+                    current_num_clicks,
+                    current_click_idx=click_idx[idx],
+                    training=False,
                 )
 
                 ### add new clicks ###
@@ -284,7 +289,9 @@ class ObjectSegmentation(pl.LightningModule):
         pred = 0
 
         if (
-            (self.config.general.experiment_name != "debugging") and (self.trainer.is_global_zero) and (batch_idx % 500 == 0)
+            (self.config.general.experiment_name != "debugging")
+            and (self.trainer.is_global_zero)
+            and (batch_idx % self.config.general.visualization_frequency == 0)
         ):  # Condition for visualization logging
             # choose a random scene to visualize from the batch
             chosen_scene_idx = random.randint(0, batch_size - 1)
@@ -478,7 +485,12 @@ class ObjectSegmentation(pl.LightningModule):
                     sample_raw_coords = raw_coords[sample_mask]
 
                     new_clicks, new_clicks_num, new_click_pos, new_click_time = get_simulated_clicks(
-                        sample_pred, sample_labels, sample_raw_coords, current_num_iter, training=True
+                        sample_pred,
+                        sample_labels,
+                        sample_raw_coords,
+                        current_num_iter,
+                        current_click_idx=click_idx[idx],
+                        training=True,
                     )
 
                     ### add new clicks ###

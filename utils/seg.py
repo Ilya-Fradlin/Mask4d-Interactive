@@ -148,6 +148,31 @@ def get_next_click_coo_torch(discrete_coords, unique_labels, gt, pred, pairwise_
     return center_global_id, center_coo, center_label, max_dist, candidates
 
 
+def get_next_click_random(discrete_coords, unique_labels, gt, pred, pairwise_distances):
+    """Sample the next click from the center of the error region"""
+    zero_indices = unique_labels == 0
+    one_indices = unique_labels == 1
+    if zero_indices.sum() == 0 or one_indices.sum() == 0:
+        return None, None, None, -1, None, None
+
+    # point furthest from border
+    center_id = random.randint(0, pairwise_distances.shape[0] - 1)
+    center_coo = discrete_coords[one_indices, :][center_id]
+    center_label = gt[one_indices][center_id]
+
+    local_mask = torch.zeros(pairwise_distances.shape[0], device=discrete_coords.device)
+    global_id_mask = torch.zeros(discrete_coords.shape[0], device=discrete_coords.device)
+    local_mask[center_id] = 1
+    global_id_mask[one_indices] = local_mask
+    center_global_id = torch.argwhere(global_id_mask)[0][0]
+
+    candidates = discrete_coords[one_indices, :]
+
+    max_dist = torch.max(pairwise_distances)
+
+    return center_global_id, center_coo, center_label, max_dist, candidates
+
+
 def get_next_simulated_click_multi(error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances):
     """Sample the next clicks for each error region"""
 
@@ -202,13 +227,19 @@ def measure_error_size(discrete_coords, unique_labels):
     return pairwise_distances
 
 
-def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None, training=True):
+def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None, current_click_idx=None, training=True):
     """Sample simulated clicks.
     The simulation samples next clicks from the top biggest error regions in the current iteration.
     """
-
     labels_qv = labels_qv.float()
     pred_label = pred_qv.float()
+
+    # Do not generate new clicks for obj that has been clicked more than the threshold
+    if current_click_idx is not None:
+        for obj_id, click_ids in current_click_idx.items():
+            if len(click_ids) >= 10:  # TODO: inject this as a click_threshold parameter
+                # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
+                pred_label[labels_qv == int(obj_id)] = int(obj_id)
 
     error_mask = torch.abs(pred_label - labels_qv) > 0
 
