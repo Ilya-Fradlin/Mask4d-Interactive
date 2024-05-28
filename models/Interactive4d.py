@@ -6,11 +6,12 @@ import MinkowskiEngine.MinkowskiOps as me
 from MinkowskiEngine.MinkowskiPooling import MinkowskiAvgPooling
 from models.modules.common import conv
 from models.position_embedding import PositionEmbeddingCoordsSine
-from third_party.pointnet2.pointnet2_utils import furthest_point_sample
 from models.modules.helpers_3detr import GenericMLP
 from torch.cuda.amp import autocast
 from models.modules.attention import CrossAttentionLayer, SelfAttentionLayer, FFNLayer
 from models.position_embedding import PositionalEncoding1D, PositionEmbeddingCoordsSine, PositionalEncoding3D
+
+# from third_party.pointnet2.pointnet2_utils import furthest_point_sample
 
 
 class Interactive4D(nn.Module):

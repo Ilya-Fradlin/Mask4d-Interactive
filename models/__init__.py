@@ -1,7 +1,6 @@
 import models.resunet as resunet
 import models.res16unet as res16unet
 from models.res16unet import Res16UNet34C, STRes16UNet34C
-from models.mask4d import Mask4D
 from models.Interactive4d import Interactive4D
 
 MODELS = []
