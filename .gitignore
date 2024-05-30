@@ -8,4 +8,7 @@ __pycache__/
 *.out
 /outputs/*
 *.pcd
+/wandb
+/datasets/preprocessing/*.json
+/datasets/preprocessing/*.yaml
 # third_party/

@@ -9,14 +9,15 @@ from natsort import natsorted
 from loguru import logger
 from tqdm import tqdm
 from fire import Fire
-import torch
 
 
 class SemanticKittiPreprocessing:
     def __init__(
         self,
-        data_dir: str = "/globalwork/data/SemanticKITTI/dataset",
-        save_dir: str = "/globalwork/fradlin/mask4d-interactive/processed/semantic_kitti",
+        data_dir: str = "/p/project/objectsegvideo/datasets/SemanticKitti/dataset",
+        save_dir: str = "/p/project/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing",
+        # data_dir: str = "/globalwork/data/SemanticKITTI/dataset",
+        # save_dir: str = "/globalwork/fradlin/mask4d-interactive/processed/semantic_kitti",
         modes: tuple = ("train", "validation"),  # "test"
         subsample_dataset: bool = False,
     ):

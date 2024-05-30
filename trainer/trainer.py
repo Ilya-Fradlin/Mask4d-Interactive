@@ -42,8 +42,9 @@ class ObjectSegmentation(pl.LightningModule):
 
         self.criterion = hydra.utils.instantiate(self.config.loss.criterion, weight_dict=weight_dict)
 
+        # Initiatie the monitoring metric
+        self.log("mIoU_monitor", 0, sync_dist=True, logger=False)
         # metrics
-        # TODO handle better the metric logger
         self.class_evaluator = hydra.utils.instantiate(config.metric)
         self.validation_metric_logger = utils.MetricLogger(delimiter="  ")
         self.training_metric_logger = utils.MetricLogger(delimiter="  ")
@@ -392,7 +393,7 @@ class ObjectSegmentation(pl.LightningModule):
 
         optimizer = hydra.utils.instantiate(self.config.optimizer, params=self.parameters())
         if "steps_per_epoch" in self.config.scheduler.scheduler.keys():
-            self.config.scheduler.scheduler.steps_per_epoch = math.ceil(len(self.train_dataloader()) * self.trainer.num_devices)
+            self.config.scheduler.scheduler.steps_per_epoch = math.ceil(len(self.train_dataloader()) / self.trainer.num_devices)
         lr_scheduler = hydra.utils.instantiate(self.config.scheduler.scheduler, optimizer=optimizer)
         scheduler_config = {"scheduler": lr_scheduler}
         scheduler_config.update(self.config.scheduler.pytorch_lightning_params)
@@ -405,9 +406,7 @@ class ObjectSegmentation(pl.LightningModule):
         # self.test_dataset = hydra.utils.instantiate(self.config.data.test_dataset)
 
     def train_dataloader(self):
-        self.config.data.train_dataloader.batch_size = int(
-            self.config.data.train_dataloader.batch_size / self.trainer.num_devices
-        )
+        print(f"num devices: {self.trainer.num_devices}")
         print(
             f"train_dataloader - batch_size: {self.config.data.train_dataloader.batch_size}, effective_batch_size: {self.config.data.train_dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.train_dataloader.num_workers}"
         )
@@ -419,9 +418,6 @@ class ObjectSegmentation(pl.LightningModule):
         )
 
     def val_dataloader(self):
-        self.config.data.validation_dataloader.batch_size = int(
-            self.config.data.validation_dataloader.batch_size / self.trainer.num_devices
-        )
         print(
             f"val_dataloader - batch_size: {self.config.data.train_dataloader.batch_size}, effective_batch_size: {self.config.data.train_dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.train_dataloader.num_workers}"
         )

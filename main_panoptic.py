@@ -20,6 +20,8 @@ def get_parameters(cfg: DictConfig):
 
     # getting basic configuration
     cfg.general.gpus = torch.cuda.device_count()
+    print(f"Number of gpus: {cfg.general.gpus}")
+    
     loggers = []
 
     if "debugging" in cfg.general.experiment_name:
@@ -35,6 +37,8 @@ def get_parameters(cfg: DictConfig):
 
         if cfg.general.experiment_name == "debugging-with-logging":
             cfg.general.visualization_frequency = 1
+            if not os.path.exists(cfg.general.save_dir):
+                os.makedirs(cfg.general.save_dir)
             for log in cfg.logging:
                 print(log)
                 loggers.append(hydra.utils.instantiate(log))

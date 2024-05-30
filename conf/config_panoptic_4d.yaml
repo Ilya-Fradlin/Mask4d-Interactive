@@ -1,7 +1,7 @@
 general:
   mode: "train"
   gpus: null
-  seed: null
+  seed: 42
   ckpt_path: null # i.e. /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt
   project_name: Mask4D-Interactive
   workspace: Ilyafr97

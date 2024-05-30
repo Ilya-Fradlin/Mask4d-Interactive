@@ -4,7 +4,7 @@
 # but they might be overwritten
 
 # splits
-sample_choice: full # full / subsampled
+sample_choice: full # full / subsampled / short
 train_mode: train
 validation_mode: validation
 test_mode: test
@@ -45,8 +45,8 @@ class_names:
 
 # data loader
 pin_memory: true
-num_workers: 4
-batch_size: 4
+num_workers: 1
+batch_size: 1
 test_batch_size: 1
 
 # collation
