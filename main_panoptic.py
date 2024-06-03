@@ -1,14 +1,17 @@
 import logging
 import os
+import argparse
 import hydra
 import torch
+from datetime import datetime
 from dotenv import load_dotenv
 from omegaconf import DictConfig, OmegaConf
 from trainer.trainer import ObjectSegmentation
 from utils.utils import flatten_dict
 from pytorch_lightning import Trainer, seed_everything
+from pytorch_lightning.loggers import WandbLogger
 
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 
 def get_parameters(cfg: DictConfig):
@@ -21,28 +24,44 @@ def get_parameters(cfg: DictConfig):
     # getting basic configuration
     cfg.general.gpus = torch.cuda.device_count()
     print(f"Number of gpus: {cfg.general.gpus}")
-    
+
     loggers = []
 
     if "debugging" in cfg.general.experiment_name:
+        os.environ["WANDB_MODE"] = "dryrun"
+        os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
+        os.environ["TORCH_CPP_LOG_LEVEL"] = "INFO"
+        os.environ["GLOO_LOG_LEVEL"] = "DEBUG"
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
         # Add debugging options + No logging
-        cfg.callbacks = [cfg.callbacks[0]]
+        cfg.data.voxel_size = 0.2
+        cfg.data.batch_size = 2
+        cfg.data.dataloader.num_workers = 1
+        cfg.data.dataloader.voxel_size = 0.2
         cfg.trainer.detect_anomaly = True
         cfg.trainer.num_sanity_val_steps = 0
         cfg.trainer.log_every_n_steps = 1
         cfg.trainer.max_epochs = 30
         cfg.trainer.check_val_every_n_epoch = 5
-        cfg.trainer.limit_train_batches = 2 # 0.0002
+        cfg.trainer.limit_train_batches = 2  # 0.0002
         cfg.trainer.limit_val_batches = 2
 
         if cfg.general.experiment_name == "debugging-with-logging":
             cfg.general.visualization_frequency = 1
             if not os.path.exists(cfg.general.save_dir):
                 os.makedirs(cfg.general.save_dir)
-            for log in cfg.logging:
-                print(log)
-                loggers.append(hydra.utils.instantiate(log))
-                loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
+
+            loggers.append(
+                WandbLogger(
+                    project=cfg.general.project_name,
+                    name=cfg.general.experiment_name,
+                    save_dir=cfg.general.save_dir,
+                    id=cfg.general.experiment_name,
+                    entity="rwth-data-science",
+                )
+            )
+            loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
 
     else:
         if not os.path.exists(cfg.general.save_dir):
@@ -51,10 +70,16 @@ def get_parameters(cfg: DictConfig):
             print("EXPERIMENT ALREADY EXIST")
             cfg.general.ckpt_path = f"{cfg.general.save_dir}/last-epoch.ckpt"
 
-        for log in cfg.logging:
-            print(log)
-            loggers.append(hydra.utils.instantiate(log))
-            loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
+            loggers.append(
+                WandbLogger(
+                    project=cfg.general.project_name,
+                    name=cfg.general.experiment_name,
+                    save_dir=cfg.general.save_dir,
+                    id=cfg.general.experiment_name,
+                    entity="rwth-data-science",
+                )
+            )
+        loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
 
     model = ObjectSegmentation(cfg)
 
@@ -62,24 +87,44 @@ def get_parameters(cfg: DictConfig):
     return cfg, model, loggers
 
 
-@hydra.main(config_path="conf", config_name="config_panoptic_4d.yaml")
 def train(cfg: DictConfig):
-    os.chdir(hydra.utils.get_original_cwd())
     cfg, model, loggers = get_parameters(cfg)
     callbacks = []
-    if cfg.callbacks is not None:
-        for cb in cfg.callbacks:
-            callbacks.append(hydra.utils.instantiate(cb))
+    callbacks.append(
+        ModelCheckpoint(
+            verbose=True,
+            save_top_k=1,
+            save_last=True,
+            monitor="mIoU_epoch",
+            mode="max",
+            dirpath=cfg.general.save_dir,
+            every_n_epochs=1,
+            filename="{epoch=02d}-{mIoU_epoch=.3f}",
+            save_on_train_epoch_end=True,
+        )
+    )
+    callbacks.append(LearningRateMonitor())
 
     runner = Trainer(
         callbacks=callbacks,
         logger=loggers,
-        **cfg.trainer,
+        default_root_dir=cfg.general.save_dir,
+        devices=cfg.trainer.num_devices,
+        num_nodes=cfg.trainer.num_nodes,
+        accelerator=cfg.trainer.accelerator,
+        max_epochs=cfg.trainer.max_epochs,
+        check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
+        log_every_n_steps=cfg.trainer.log_every_n_steps,
+        limit_train_batches=cfg.trainer.limit_train_batches,
+        limit_val_batches=cfg.trainer.limit_val_batches,
+        detect_anomaly=cfg.trainer.detect_anomaly,
+        strategy="ddp_find_unused_parameters_false",
+        profiler="simple",
+        num_sanity_val_steps=0,
     )
     runner.fit(model, ckpt_path=cfg.general.ckpt_path)
 
 
-@hydra.main(config_path="conf", config_name="config_panoptic_4d.yaml")
 def validate(cfg: DictConfig):
     # because hydra wants to change dir for some reason
     os.chdir(hydra.utils.get_original_cwd())
@@ -93,7 +138,6 @@ def validate(cfg: DictConfig):
     runner.validate(model=model, ckpt_path=cfg.general.ckpt_path)
 
 
-@hydra.main(config_path="conf", config_name="config_panoptic_4d.yaml")
 def test(cfg: DictConfig):
     # because hydra wants to change dir for some reason
     os.chdir(hydra.utils.get_original_cwd())
@@ -107,8 +151,20 @@ def test(cfg: DictConfig):
     runner.test(model=model, ckpt_path=cfg.general.ckpt_path)
 
 
-@hydra.main(config_path="conf", config_name="config_panoptic_4d.yaml")
-def main(cfg: DictConfig):
+def main():
+    # Load the configuration from the YAML file
+    cfg = OmegaConf.load("config.yaml")
+    cfg.general.experiment_name = cfg.general.experiment_name.replace("now", datetime.now().strftime("%Y-%m-%d_%H%M%S"))
+    resolved_cfg = OmegaConf.to_container(cfg, resolve=True)
+    print(resolved_cfg)
+    cfg = OmegaConf.create(resolved_cfg)
+
+    parser = argparse.ArgumentParser(description="Override config parameters.")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    args = parser.parse_args()
+    if args.debug:
+        cfg.general.experiment_name = "debugging-with-logging"
+
     if cfg["general"]["mode"] == "train":
         train(cfg)
     elif cfg["general"]["mode"] == "validate":

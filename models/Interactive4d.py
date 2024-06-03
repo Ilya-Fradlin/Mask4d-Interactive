@@ -1,5 +1,5 @@
 import torch
-import hydra
+import argparse
 import itertools
 import torch.nn as nn
 import MinkowskiEngine.MinkowskiOps as me
@@ -8,6 +8,7 @@ from models.modules.common import conv
 from models.position_embedding import PositionEmbeddingCoordsSine
 from models.modules.helpers_3detr import GenericMLP
 from torch.cuda.amp import autocast
+from models import Res16UNet34C
 from models.modules.attention import CrossAttentionLayer, SelfAttentionLayer, FFNLayer
 from models.position_embedding import PositionalEncoding1D, PositionEmbeddingCoordsSine, PositionalEncoding3D
 
@@ -17,8 +18,6 @@ from models.position_embedding import PositionalEncoding1D, PositionEmbeddingCoo
 class Interactive4D(nn.Module):
     def __init__(
         self,
-        backbone,
-        positional_encoding,
         num_heads,
         num_decoders,
         num_levels,
@@ -34,8 +33,11 @@ class Interactive4D(nn.Module):
     ):
         super().__init__()
 
-        self.backbone = hydra.utils.instantiate(backbone)
-        self.positional_encoding = positional_encoding
+        backbone_cfg = argparse.ArgumentParser()
+        backbone_cfg.dilations = [1, 1, 1, 1]
+        backbone_cfg.conv1_kernel_size = 5
+        backbone_cfg.bn_momentum = 0.02
+        self.backbone = Res16UNet34C(in_channels=2, out_channels=19, config=backbone_cfg)
         self.num_heads = num_heads
         self.num_decoders = num_decoders
         self.num_levels = num_levels
@@ -60,7 +62,7 @@ class Interactive4D(nn.Module):
             nn.Linear(self.mask_dim, self.mask_dim), nn.ReLU(), nn.Linear(self.mask_dim, self.mask_dim)
         )
 
-        self.pos_enc = hydra.utils.instantiate(positional_encoding)
+        self.pos_enc = PositionEmbeddingCoordsSine(pos_type="fourier", d_pos=hidden_dim, gauss_scale=1.0, normalize=True)
 
         self.pooling = MinkowskiAvgPooling(kernel_size=2, stride=2, dimension=3)
 

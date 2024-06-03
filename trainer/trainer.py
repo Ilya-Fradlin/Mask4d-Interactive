@@ -8,12 +8,18 @@ import MinkowskiEngine as ME
 import pytorch_lightning as pl
 import torch
 from contextlib import nullcontext
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import OneCycleLR
+from torch.utils.data import DataLoader
 
 import utils.misc as utils
 from utils.utils import generate_wandb_objects3d
 from utils.seg import mean_iou, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks
+from datasets.utils import VoxelizeCollate
+from datasets.lidar import LidarDataset
+from models import Interactive4D
+from models.criterion import SetCriterion
 from models.metrics.utils import IoU_at_numClicks, NumClicks_for_IoU, mIoU_per_class_metric, mIoU_metric, losses_metric
-from pytorch_lightning.callbacks import ModelCheckpoint
 
 
 class ObjectSegmentation(pl.LightningModule):
@@ -21,7 +27,7 @@ class ObjectSegmentation(pl.LightningModule):
         super().__init__()
         self.config = config
         # model
-        self.interactive4d = hydra.utils.instantiate(config.model)
+        self.interactive4d = Interactive4D(num_heads=8, num_decoders=3, num_levels=1, hidden_dim=128, dim_feedforward=1024, shared_decoder=False, num_bg_queries=10, dropout=0.0, pre_norm=False, aux=True, voxel_size=config.data.voxel_size, sample_sizes=[4000, 8000, 16000, 32000])
         self.optional_freeze = nullcontext
 
         weight_dict = {
@@ -36,7 +42,7 @@ class ObjectSegmentation(pl.LightningModule):
             for i in range(self.interactive4d.num_decoders * self.interactive4d.num_levels):
                 aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
             weight_dict.update(aux_weight_dict)
-        self.criterion = hydra.utils.instantiate(self.config.loss.criterion, weight_dict=weight_dict)
+        self.criterion = SetCriterion(losses=["bce", "dice"], weight_dict=weight_dict)
 
         # Initiatie the monitoring metric
         self.log("mIoU_monitor", 0, sync_dist=True, logger=False)
@@ -50,7 +56,6 @@ class ObjectSegmentation(pl.LightningModule):
         self.mIoU_per_class_metric_validation = mIoU_per_class_metric(training=False)
         self.iou_at_numClicks = IoU_at_numClicks(num_clicks=self.config.general.clicks_of_interest)
         self.numClicks_for_IoU = NumClicks_for_IoU(iou_thresholds=self.config.general.iou_targets)
-
 
         self.save_hyperparameters()
 
@@ -101,9 +106,7 @@ class ObjectSegmentation(pl.LightningModule):
         self.interactive4d.train()
 
         #########  2. real forward pass  #########
-        outputs = self.interactive4d.forward_mask(
-            pcd_features, aux, coordinates, pos_encodings_pcd, click_idx=click_idx, click_time_idx=click_time_idx
-        )
+        outputs = self.interactive4d.forward_mask(pcd_features, aux, coordinates, pos_encodings_pcd, click_idx=click_idx, click_time_idx=click_time_idx)
 
         ######### 3. loss back propagation #########
         click_weights = cal_click_loss_weights(batch_indicators, raw_coords, torch.cat(labels), click_idx)
@@ -127,13 +130,13 @@ class ObjectSegmentation(pl.LightningModule):
             pred = [p.argmax(-1) for p in pred_logits]
             general_miou, label_miou_dict = mean_iou(pred, labels, obj2label)
             label_miou_dict = {"trainer/" + k: v for k, v in label_miou_dict.items()}
-            
+
         self.log("trainer/loss", losses, prog_bar=True, on_step=True)
         self.log("trainer/mIoU", general_miou, prog_bar=True, on_step=True)
         self.losses_metric.update(losses)
         self.mIoU_metric.update(general_miou)
         self.mIoU_per_class_metric.update(label_miou_dict)
-        
+
         return losses
 
     def on_train_epoch_end(self):
@@ -141,11 +144,11 @@ class ObjectSegmentation(pl.LightningModule):
         miou_per_class_epoch = self.mIoU_per_class_metric.compute()
         losses_epoch = self.losses_metric.compute()
         print(f"End Epoch mIoU: {miou_epoch},  loss: {losses_epoch}, class_mIoU: {miou_per_class_epoch}", flush=True)
-        
+
         self.log_dict(miou_per_class_epoch)
         self.log("mIoU_epoch", miou_epoch)
         self.log("loss_epoch", losses_epoch)
-        
+
         self.mIoU_metric.reset()
         self.mIoU_per_class_metric.reset()
         self.losses_metric.reset()
@@ -257,14 +260,12 @@ class ObjectSegmentation(pl.LightningModule):
 
                 ### add new clicks ###
                 if new_clicks is not None:
-                    click_idx[idx], click_time_idx[idx] = extend_clicks(
-                        click_idx[idx], click_time_idx[idx], new_clicks, new_click_time
-                    )
+                    click_idx[idx], click_time_idx[idx] = extend_clicks(click_idx[idx], click_time_idx[idx], new_clicks, new_click_time)
 
             if current_num_clicks != 0:
                 # mean_iou here is calculated for just with the points responsible for the quantized values!
                 general_miou, label_miou_dict = mean_iou(updated_pred, labels, obj2label)
-                
+
                 self.losses_metric_validation.update(sum(loss_dict_reduced_scaled.values()))
                 self.mIoU_metric_validation.update(general_miou)
                 self.mIoU_per_class_metric_validation.update(label_miou_dict)
@@ -277,11 +278,7 @@ class ObjectSegmentation(pl.LightningModule):
 
         pred = 0
 
-        if (
-            (self.config.general.experiment_name != "debugging")
-            and (self.trainer.is_global_zero)
-            and (batch_idx % self.config.general.visualization_frequency == 0)
-        ):  # Condition for visualization logging
+        if (self.config.general.experiment_name != "debugging") and (self.trainer.is_global_zero) and (batch_idx % self.config.general.visualization_frequency == 0):  # Condition for visualization logging
             # choose a random scene to visualize from the batch
             chosen_scene_idx = random.randint(0, batch_size - 1)
             scene_name = scene_names[chosen_scene_idx]
@@ -298,51 +295,51 @@ class ObjectSegmentation(pl.LightningModule):
         # self.validation_step_outputs.append(pred)
 
     def on_validation_epoch_end(self):
-            print("\n")
-            print("--------- Evaluating Validation Performance  -----------")
-            warnings.filterwarnings(
-                "ignore",
-                message="The ``compute`` method of metric NumClicks_for_IoU was called before the ``update`` method",
-                category=UserWarning,
-            )
-            results_dict = {}
+        print("\n")
+        print("--------- Evaluating Validation Performance  -----------")
+        warnings.filterwarnings(
+            "ignore",
+            message="The ``compute`` method of metric NumClicks_for_IoU was called before the ``update`` method",
+            category=UserWarning,
+        )
+        results_dict = {}
 
-            # Evaluate the NoC@IoU Metric
-            metrics_dictionary, iou_thresholds = self.numClicks_for_IoU.compute()
-            for iou in iou_thresholds:
-                noc = metrics_dictionary[iou]["noc"]
-                count = metrics_dictionary[iou]["count"]
-                results_dict[f"scenes_reached_{iou}_iou"] = count.item()
-                if count == 0:
-                    results_dict[f"validation/Interactive_metrics/NoC@{iou}"] = 0  # or return a default value or raise an error
-                else:
-                    results_dict[f"validation/Interactive_metrics/NoC@{iou}"] = (noc / count).item()
+        # Evaluate the NoC@IoU Metric
+        metrics_dictionary, iou_thresholds = self.numClicks_for_IoU.compute()
+        for iou in iou_thresholds:
+            noc = metrics_dictionary[iou]["noc"]
+            count = metrics_dictionary[iou]["count"]
+            results_dict[f"scenes_reached_{iou}_iou"] = count.item()
+            if count == 0:
+                results_dict[f"validation/Interactive_metrics/NoC@{iou}"] = 0  # or return a default value or raise an error
+            else:
+                results_dict[f"validation/Interactive_metrics/NoC@{iou}"] = (noc / count).item()
 
-            # Evaluate the IoU@NoC Metric
-            metrics_dictionary, evaluated_num_clicks = self.iou_at_numClicks.compute()
-            for noc in evaluated_num_clicks:
-                iou = metrics_dictionary[noc]["iou"]
-                count = metrics_dictionary[noc]["count"]
-                if count == 0:
-                    results_dict[f"validation/Interactive_metrics/IoU@{noc}"] = 0  # or return a default value or raise an error
-                else:
-                    results_dict[f"validation/Interactive_metrics/IoU@{noc}"] = (iou / count).item()
+        # Evaluate the IoU@NoC Metric
+        metrics_dictionary, evaluated_num_clicks = self.iou_at_numClicks.compute()
+        for noc in evaluated_num_clicks:
+            iou = metrics_dictionary[noc]["iou"]
+            count = metrics_dictionary[noc]["count"]
+            if count == 0:
+                results_dict[f"validation/Interactive_metrics/IoU@{noc}"] = 0  # or return a default value or raise an error
+            else:
+                results_dict[f"validation/Interactive_metrics/IoU@{noc}"] = (iou / count).item()
 
-            miou_epoch = self.mIoU_metric_validation.compute()
-            miou_per_class_epoch = self.mIoU_per_class_metric_validation.compute()
-            losses_epoch = self.losses_metric_validation.compute()
-        
-            print("\nValidation Epoch Results:\n")
-            print(f"miou_epoch: {miou_epoch}, losses_epoch: {losses_epoch} \n")
-            print(f"miou_per_class_epoch: {miou_per_class_epoch} \n")
-            print("Interactive_metrics:\n")
-            print(results_dict)
-            
-            self.mIoU_metric_validation.reset()
-            self.mIoU_per_class_metric_validation.reset()
-            self.losses_metric_validation.reset()
-            self.iou_at_numClicks.reset()
-            self.numClicks_for_IoU.reset()
+        miou_epoch = self.mIoU_metric_validation.compute()
+        miou_per_class_epoch = self.mIoU_per_class_metric_validation.compute()
+        losses_epoch = self.losses_metric_validation.compute()
+
+        print("\nValidation Epoch Results:\n")
+        print(f"miou_epoch: {miou_epoch}, losses_epoch: {losses_epoch} \n")
+        print(f"miou_per_class_epoch: {miou_per_class_epoch} \n")
+        print("Interactive_metrics:\n")
+        print(results_dict)
+
+        self.mIoU_metric_validation.reset()
+        self.mIoU_per_class_metric_validation.reset()
+        self.losses_metric_validation.reset()
+        self.iou_at_numClicks.reset()
+        self.numClicks_for_IoU.reset()
 
     def test_step(self, batch, batch_idx):
         # TODO
@@ -356,43 +353,50 @@ class ObjectSegmentation(pl.LightningModule):
         # Adjust the learning rate based on the number of GPUs
         # self.config.optimizer.lr = self.config.optimizer.lr * math.sqrt(self.trainer.num_devices)
         # self.config.scheduler.scheduler.max_lr = self.config.optimizer.lr
-
-        optimizer = hydra.utils.instantiate(self.config.optimizer, params=self.parameters())
-        if "steps_per_epoch" in self.config.scheduler.scheduler.keys():
-            self.config.scheduler.scheduler.steps_per_epoch = math.ceil(len(self.train_dataloader()) / self.trainer.num_devices)
-        lr_scheduler = hydra.utils.instantiate(self.config.scheduler.scheduler, optimizer=optimizer)
-        scheduler_config = {"scheduler": lr_scheduler}
-        scheduler_config.update(self.config.scheduler.pytorch_lightning_params)
-        print(f"optimizer_max_lr: {self.config.optimizer.lr}, steps_per_epoch:{self.config.scheduler.scheduler.steps_per_epoch}")
+        optimizer = AdamW(params=self.parameters(), lr=self.config.optimizer.lr)
+        steps_per_epoch = math.ceil(len(self.train_dataloader()) / self.trainer.num_devices)
+        lr_scheduler = OneCycleLR(max_lr=self.config.optimizer.lr, epochs=self.config.trainer.max_epochs, steps_per_epoch=steps_per_epoch, optimizer=optimizer)
+        scheduler_config = {"scheduler": lr_scheduler, "interval": "step"}
+        print(f"optimizer_max_lr: {self.config.optimizer.lr}, steps_per_epoch:{steps_per_epoch}")
         return [optimizer], [scheduler_config]
 
     def setup(self, stage):
-        self.train_dataset = hydra.utils.instantiate(self.config.data.train_dataset)
-        self.validation_dataset = hydra.utils.instantiate(self.config.data.validation_dataset)
+        self.train_dataset = LidarDataset(
+            data_dir=self.config.data.datasets.data_dir,
+            add_distance=self.config.data.datasets.add_distance,
+            sweep=self.config.data.datasets.sweep,
+            segment_full_scene=self.config.data.datasets.segment_full_scene,
+            obj_type=self.config.data.datasets.obj_type,
+            sample_choice=self.config.data.datasets.sample_choice_train,
+            ignore_label=self.config.data.ignore_label,
+            volume_augmentations_path=self.config.data.datasets.volume_augmentations_path,
+            mode="train",
+            instance_population=0,  # self.config.data.instance_population
+        )
+        self.validation_dataset = LidarDataset(
+            data_dir=self.config.data.datasets.data_dir,
+            add_distance=self.config.data.datasets.add_distance,
+            sweep=self.config.data.datasets.sweep,
+            segment_full_scene=self.config.data.datasets.segment_full_scene,
+            obj_type=self.config.data.datasets.obj_type,
+            sample_choice=self.config.data.datasets.sample_choice_validation,
+            ignore_label=self.config.data.ignore_label,
+            mode="validation",
+            instance_population=0,  # self.config.data.instance_population
+            volume_augmentations_path=None,
+        )
         # self.test_dataset = hydra.utils.instantiate(self.config.data.test_dataset)
 
     def train_dataloader(self):
         print(f"num devices: {self.trainer.num_devices}")
-        print(
-            f"train_dataloader - batch_size: {self.config.data.train_dataloader.batch_size}, effective_batch_size: {self.config.data.train_dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.train_dataloader.num_workers}"
-        )
-        c_fn = hydra.utils.instantiate(self.config.data.train_collation)
-        return hydra.utils.instantiate(
-            self.config.data.train_dataloader,
-            self.train_dataset,
-            collate_fn=c_fn,
-        )
+        print(f"train_dataloader - batch_size: {self.config.data.dataloader.batch_size}, effective_batch_size: {self.config.data.dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.dataloader.num_workers}")
+        c_fn = VoxelizeCollate(mode="train", ignore_label=self.config.data.ignore_label, voxel_size=self.config.data.voxel_size)
+        return DataLoader(self.train_dataset, shuffle=True, pin_memory=self.config.data.dataloader.pin_memory, num_workers=self.config.data.dataloader.num_workers, batch_size=self.config.data.dataloader.batch_size, collate_fn=c_fn)
 
     def val_dataloader(self):
-        print(
-            f"val_dataloader - batch_size: {self.config.data.train_dataloader.batch_size}, effective_batch_size: {self.config.data.train_dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.train_dataloader.num_workers}"
-        )
-        c_fn = hydra.utils.instantiate(self.config.data.validation_collation)
-        return hydra.utils.instantiate(
-            self.config.data.validation_dataloader,
-            self.validation_dataset,
-            collate_fn=c_fn,
-        )
+        print(f"val_dataloader - batch_size: {self.config.data.dataloader.test_batch_size}, effective_batch_size: {self.config.data.dataloader.test_batch_size * self.trainer.num_devices}, num_workers: {self.config.data.dataloader.num_workers}")
+        c_fn = VoxelizeCollate(mode="validation", ignore_label=self.config.data.ignore_label, voxel_size=self.config.data.voxel_size)
+        return DataLoader(self.validation_dataset, shuffle=False, pin_memory=self.config.data.dataloader.pin_memory, num_workers=self.config.data.dataloader.num_workers, batch_size=self.config.data.dataloader.test_batch_size, collate_fn=c_fn)
 
     def test_dataloader(self):
         return None
@@ -457,9 +461,7 @@ class ObjectSegmentation(pl.LightningModule):
 
                     ### add new clicks ###
                     if new_clicks is not None:
-                        click_idx[idx], click_time_idx[idx] = extend_clicks(
-                            click_idx[idx], click_time_idx[idx], new_clicks, new_click_time
-                        )
+                        click_idx[idx], click_time_idx[idx] = extend_clicks(click_idx[idx], click_time_idx[idx], new_clicks, new_click_time)
 
                 current_num_iter += 1
 
@@ -482,9 +484,7 @@ class ObjectSegmentation(pl.LightningModule):
             for i in range(batch_size):
                 mapping = {old_key: new_key for new_key, old_key in enumerate(sorted(click_idx[i].keys(), key=int))}
                 click_idx[i] = {str(j): click_idx[i][old_key] for j, old_key in enumerate(sorted(click_idx[i].keys(), key=int))}
-                obj2label[i] = {
-                    str(j): obj2label[i][old_key] for j, old_key in enumerate(sorted(obj2label[i].keys(), key=int), start=1)
-                }
+                obj2label[i] = {str(j): obj2label[i][old_key] for j, old_key in enumerate(sorted(obj2label[i].keys(), key=int), start=1)}
                 # Update the keys in labels[i] using the mapping dictionary
                 for old_id, new_id in mapping.items():
                     labels[i][labels[i] == int(old_id)] = new_id

@@ -1,7 +1,7 @@
 # @package data
 train_dataset:
   _target_: datasets.lidar.LidarDataset
-  data_dir: /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti
+  data_dir: /p/project/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing
   mode: ${data.train_mode}
   add_distance: ${data.add_distance}
   sweep: ${data.sweep}
@@ -14,20 +14,20 @@ train_dataset:
 
 validation_dataset:
   _target_: datasets.lidar.LidarDataset
-  data_dir: /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti
+  data_dir: /p/project/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing
   mode: ${data.validation_mode}
   add_distance: ${data.add_distance}
   sweep: ${data.sweep}
   segment_full_scene: ${data.segment_full_scene}
   obj_type: ${data.obj_type}
-  sample_choice: ${data.sample_choice}
+  sample_choice: short # ${data.sample_choice}
   instance_population: 0
   ignore_label: ${data.ignore_label}
   volume_augmentations_path: null
 
 test_dataset:
   _target_: datasets.lidar.LidarDataset
-  data_dir: /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti
+  data_dir: /p/project/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing/
   mode: ${data.test_mode}
   add_distance: ${data.add_distance}
   sweep: ${data.sweep}
