@@ -5,17 +5,14 @@ import copy
 import random
 import warnings
 import MinkowskiEngine as ME
-import numpy as np
 import pytorch_lightning as pl
 import torch
-from sklearn.cluster import DBSCAN
 from contextlib import nullcontext
-from collections import defaultdict
 
 import utils.misc as utils
 from utils.utils import generate_wandb_objects3d
 from utils.seg import mean_iou, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks
-from models.metrics.utils import IoU_at_numClicks, NumClicks_for_IoU
+from models.metrics.utils import IoU_at_numClicks, NumClicks_for_IoU, mIoU_per_class_metric, mIoU_metric, losses_metric
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 
@@ -39,19 +36,21 @@ class ObjectSegmentation(pl.LightningModule):
             for i in range(self.interactive4d.num_decoders * self.interactive4d.num_levels):
                 aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
             weight_dict.update(aux_weight_dict)
-
         self.criterion = hydra.utils.instantiate(self.config.loss.criterion, weight_dict=weight_dict)
 
         # Initiatie the monitoring metric
         self.log("mIoU_monitor", 0, sync_dist=True, logger=False)
-        # metrics
-        self.class_evaluator = hydra.utils.instantiate(config.metric)
-        self.validation_metric_logger = utils.MetricLogger(delimiter="  ")
-        self.training_metric_logger = utils.MetricLogger(delimiter="  ")
+        # Training metrics
+        self.losses_metric = losses_metric()
+        self.mIoU_metric = mIoU_metric()
+        self.mIoU_per_class_metric = mIoU_per_class_metric(training=True)
+        # Validation metrics
+        self.losses_metric_validation = losses_metric()
+        self.mIoU_metric_validation = mIoU_metric()
+        self.mIoU_per_class_metric_validation = mIoU_per_class_metric(training=False)
         self.iou_at_numClicks = IoU_at_numClicks(num_clicks=self.config.general.clicks_of_interest)
         self.numClicks_for_IoU = NumClicks_for_IoU(iou_thresholds=self.config.general.iou_targets)
-        # self.validation_step_outputs = []
-        # self.training_step_outputs = []
+
 
         self.save_hyperparameters()
 
@@ -128,35 +127,28 @@ class ObjectSegmentation(pl.LightningModule):
             pred = [p.argmax(-1) for p in pred_logits]
             general_miou, label_miou_dict = mean_iou(pred, labels, obj2label)
             label_miou_dict = {"trainer/" + k: v for k, v in label_miou_dict.items()}
-            self.log_dict(label_miou_dict, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
-            self.training_metric_logger.update(mIoU=general_miou)
-            self.training_metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
-
-        self.log("trainer/loss", losses, prog_bar=True, on_epoch=True, on_step=True, batch_size=batch_size, sync_dist=True)
-        self.log("trainer/mIoU", general_miou, prog_bar=True, on_epoch=True, on_step=True, batch_size=batch_size, sync_dist=True)
-
-        # self.training_step_outputs.extend(losses)
-
+            
+        self.log("trainer/loss", losses, prog_bar=True, on_step=True)
+        self.log("trainer/mIoU", general_miou, prog_bar=True, on_step=True)
+        self.losses_metric.update(losses)
+        self.mIoU_metric.update(general_miou)
+        self.mIoU_per_class_metric.update(label_miou_dict)
+        
         return losses
 
     def on_train_epoch_end(self):
-        # if self.trainer.is_global_zero:
-        # self.all_gather(self.training_metric_logger)
-        train_stats = {k: meter.global_avg for k, meter in self.training_metric_logger.meters.items()}
-        self.log_dict(
-            {
-                "train_epoch_end/epoch": self.current_epoch,
-                "train_epoch_end/loss_epoch": train_stats["loss"],
-                "train_epoch_end/loss_bce_epoch": train_stats["loss_bce"],
-                "train_epoch_end/loss_dice_epoch": train_stats["loss_dice"],
-                "train_epoch_end/mIoU_epoch": train_stats["mIoU"],
-            },
-            sync_dist=True,
-        )
-        self.log("mIoU_monitor", train_stats["mIoU"], sync_dist=True, logger=False)
-        print("\n")
-        print("Averaged stats:", self.training_metric_logger)
-        self.training_metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
+        miou_epoch = self.mIoU_metric.compute()
+        miou_per_class_epoch = self.mIoU_per_class_metric.compute()
+        losses_epoch = self.losses_metric.compute()
+        print(f"End Epoch mIoU: {miou_epoch},  loss: {losses_epoch}, class_mIoU: {miou_per_class_epoch}", flush=True)
+        
+        self.log_dict(miou_per_class_epoch)
+        self.log("mIoU_epoch", miou_epoch)
+        self.log("loss_epoch", losses_epoch)
+        
+        self.mIoU_metric.reset()
+        self.mIoU_per_class_metric.reset()
+        self.losses_metric.reset()
 
     def validation_step(self, batch, batch_idx):
 
@@ -272,14 +264,10 @@ class ObjectSegmentation(pl.LightningModule):
             if current_num_clicks != 0:
                 # mean_iou here is calculated for just with the points responsible for the quantized values!
                 general_miou, label_miou_dict = mean_iou(updated_pred, labels, obj2label)
-                label_miou_dict = {"validation/" + k: v for k, v in label_miou_dict.items()}
-                self.log_dict(label_miou_dict, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
-                self.validation_metric_logger.update(mIoU=general_miou)
-                self.validation_metric_logger.update(
-                    loss=sum(loss_dict_reduced_scaled.values()),
-                    **loss_dict_reduced_scaled,
-                    **loss_dict_reduced_unscaled,
-                )
+                
+                self.losses_metric_validation.update(sum(loss_dict_reduced_scaled.values()))
+                self.mIoU_metric_validation.update(general_miou)
+                self.mIoU_per_class_metric_validation.update(label_miou_dict)
 
             if current_num_clicks == 0:
                 new_clicks_num = num_obj[idx]
@@ -310,8 +298,6 @@ class ObjectSegmentation(pl.LightningModule):
         # self.validation_step_outputs.append(pred)
 
     def on_validation_epoch_end(self):
-        if self.trainer.is_global_zero:
-            # self.all_gather(self.validation_outputs)
             print("\n")
             print("--------- Evaluating Validation Performance  -----------")
             warnings.filterwarnings(
@@ -320,7 +306,6 @@ class ObjectSegmentation(pl.LightningModule):
                 category=UserWarning,
             )
             results_dict = {}
-            results_dict["mIoU"] = self.validation_metric_logger.meters["mIoU"].global_avg
 
             # Evaluate the NoC@IoU Metric
             metrics_dictionary, iou_thresholds = self.numClicks_for_IoU.compute()
@@ -329,9 +314,9 @@ class ObjectSegmentation(pl.LightningModule):
                 count = metrics_dictionary[iou]["count"]
                 results_dict[f"scenes_reached_{iou}_iou"] = count.item()
                 if count == 0:
-                    results_dict[f"NoC@{iou}"] = 0  # or return a default value or raise an error
+                    results_dict[f"validation/Interactive_metrics/NoC@{iou}"] = 0  # or return a default value or raise an error
                 else:
-                    results_dict[f"NoC@{iou}"] = (noc / count).item()
+                    results_dict[f"validation/Interactive_metrics/NoC@{iou}"] = (noc / count).item()
 
             # Evaluate the IoU@NoC Metric
             metrics_dictionary, evaluated_num_clicks = self.iou_at_numClicks.compute()
@@ -339,44 +324,25 @@ class ObjectSegmentation(pl.LightningModule):
                 iou = metrics_dictionary[noc]["iou"]
                 count = metrics_dictionary[noc]["count"]
                 if count == 0:
-                    results_dict[f"IoU@{noc}"] = 0  # or return a default value or raise an error
+                    results_dict[f"validation/Interactive_metrics/IoU@{noc}"] = 0  # or return a default value or raise an error
                 else:
-                    results_dict[f"IoU@{noc}"] = (iou / count).item()
+                    results_dict[f"validation/Interactive_metrics/IoU@{noc}"] = (iou / count).item()
 
-            print("\n")
+            miou_epoch = self.mIoU_metric_validation.compute()
+            miou_per_class_epoch = self.mIoU_per_class_metric_validation.compute()
+            losses_epoch = self.losses_metric_validation.compute()
+        
+            print("\nValidation Epoch Results:\n")
+            print(f"miou_epoch: {miou_epoch}, losses_epoch: {losses_epoch} \n")
+            print(f"miou_per_class_epoch: {miou_per_class_epoch} \n")
+            print("Interactive_metrics:\n")
             print(results_dict)
-            stats = {k: meter.global_avg for k, meter in self.validation_metric_logger.meters.items()}
-            stats.update(results_dict)
-
-            # self.validation_step_outputs.clear()  # free memory
-            self.validation_metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
-
-            self.log_dict(
-                {
-                    "validation/epoch": self.current_epoch,
-                    "validation/loss_epoch": stats["loss"],
-                    "validation/loss_bce_epoch": stats["loss_bce"],
-                    "validation/loss_dice_epoch": stats["loss_dice"],
-                    "validation/mIoU_epoch": stats["mIoU"],
-                    "validation/Interactive_metrics/NoC_50": stats["NoC@50"],
-                    "validation/Interactive_metrics/NoC_50": stats["scenes_reached_50_iou"],
-                    "validation/Interactive_metrics/NoC_65": stats["NoC@65"],
-                    "validation/Interactive_metrics/NoC_65": stats["scenes_reached_65_iou"],
-                    "validation/Interactive_metrics/NoC_80": stats["NoC@80"],
-                    "validation/Interactive_metrics/NoC_80": stats["scenes_reached_80_iou"],
-                    "validation/Interactive_metrics/NoC_85": stats["NoC@85"],
-                    "validation/Interactive_metrics/NoC_85": stats["scenes_reached_85_iou"],
-                    "validation/Interactive_metrics/NoC_90": stats["NoC@90"],
-                    "validation/Interactive_metrics/NoC_90": stats["scenes_reached_90_iou"],
-                    "validation/Interactive_metrics/IoU_1": stats["IoU@1"],
-                    "validation/Interactive_metrics/IoU_2": stats["IoU@2"],
-                    "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
-                    "validation/Interactive_metrics/IoU_4": stats["IoU@4"],
-                    "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
-                },
-                sync_dist=True,
-            )
-        self.time_since_last_visualization = 0
+            
+            self.mIoU_metric_validation.reset()
+            self.mIoU_per_class_metric_validation.reset()
+            self.losses_metric_validation.reset()
+            self.iou_at_numClicks.reset()
+            self.numClicks_for_IoU.reset()
 
     def test_step(self, batch, batch_idx):
         # TODO

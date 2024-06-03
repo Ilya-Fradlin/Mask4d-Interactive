@@ -64,83 +64,84 @@ class NumClicks_for_IoU(Metric):
         return metrics_dictionary, self.iou_thresholds
 
 
-class mIou_per_class(Metric):
-    def __init__(self, num_classes=19):
-        super().__init__()
-        self.num_classes = num_classes
-        for i in range(1, num_classes + 1):
-            self.add_state(f"iou_class_{i}", default=torch.tensor(0.0), dist_reduce_fx="mean")
-            self.add_state(f"counts_class_{i}", default=torch.tensor(0.0), dist_reduce_fx="mean")
+class mIoU_metric(Metric):
+    higher_is_better = True
 
-    def update(self, iou, class_id):
-        self.__dict__[f"iou_class_{class_id}"] += iou
-        self.__dict__[f"counts_class_{class_id}"] += 1
+    def __init__(self):
+        super().__init__()
+        self.add_state(f"mIoU", default=torch.tensor(0.0), dist_reduce_fx="mean")
+        self.add_state(f"count", default=torch.tensor(0.0), dist_reduce_fx="mean")
+
+    def update(self, mIoU):
+        self.__dict__[f"mIoU"] += mIoU
+        self.__dict__[f"count"] += 1
+
+    def compute(self):
+        return self.__dict__[f"mIoU"] / self.__dict__[f"count"]
+
+
+class losses_metric(Metric):
+    higher_is_better = False
+
+    def __init__(self):
+        super().__init__()
+        self.add_state(f"loss", default=torch.tensor(0.0), dist_reduce_fx="mean")
+        self.add_state(f"count", default=torch.tensor(0.0), dist_reduce_fx="mean")
+
+    def update(self, loss):
+        self.__dict__[f"loss"] += loss
+        self.__dict__[f"count"] += 1
+
+    def compute(self):
+        return self.__dict__[f"loss"] / self.__dict__[f"count"]
+
+
+class mIoU_per_class_metric(Metric):
+    higher_is_better = True
+
+    def __init__(self, training = True):
+        super().__init__()
+        self.training = training
+        self.label_mapping = {
+            0: "unlabeled",
+            1: "car",
+            2: "bicycle",
+            3: "motorcycle",
+            4: "truck",
+            5: "other-vehicle",
+            6: "person",
+            7: "bicyclist",
+            8: "motorcyclist",
+            9: "road",
+            10: "parking",
+            11: "sidewalk",
+            12: "other-ground",
+            13: "building",
+            14: "fence",
+            15: "vegetation",
+            16: "trunk",
+            17: "terrain",
+            18: "pole",
+            19: "traffic-sign",
+        }
+        for _, label in self.label_mapping.items():
+            self.add_state(f"miou_for_{label}", default=torch.tensor(0.0), dist_reduce_fx="mean")
+            self.add_state(f"count_for_{label}", default=torch.tensor(0.0), dist_reduce_fx="mean")
+
+    def update(self, label_miou_dict):
+        for label, mIoU in label_miou_dict.items():
+            label = label.split("/")[-1]
+            if label in self.label_mapping.values():
+                self.__dict__[f"miou_for_{label}"] += mIoU
+                self.__dict__[f"count_for_{label}"] += 1
+            else:
+                raise ValueError("unknown label found")
 
     def compute(self):
         metrics_dictionary = {}
-
-        for i in range(self.num_classes):
-            metrics_dictionary[i] = {}
-            metrics_dictionary[i]["iou"] = self.__dict__[f"iou_for_{i}"]
-            metrics_dictionary[i]["count"] = self.__dict__[f"count_for_{i}"]
-
-        return metrics_dictionary, self.num_classes
-
-
-# class NumClicks_for_IoU(Metric):
-
-#     def __init__(self, iou_thresholds=[50, 65, 80, 85, 90]):
-#         super().__init__()
-
-#         self.iou_thresholds = iou_thresholds
-#         self.add_state("noc_for_50", default=torch.tensor(0), dist_reduce_fx="mean")
-#         self.add_state("count_for_50", default=torch.tensor(0), dist_reduce_fx="mean")
-#         self.add_state("noc_for_65", default=torch.tensor(0), dist_reduce_fx="mean")
-#         self.add_state("count_for_65", default=torch.tensor(0), dist_reduce_fx="mean")
-#         self.add_state("noc_for_80", default=torch.tensor(0), dist_reduce_fx="mean")
-#         self.add_state("count_for_80", default=torch.tensor(0), dist_reduce_fx="mean")
-#         self.add_state("noc_for_85", default=torch.tensor(0), dist_reduce_fx="mean")
-#         self.add_state("count_for_85", default=torch.tensor(0), dist_reduce_fx="mean")
-#         self.add_state("noc_for_90", default=torch.tensor(0), dist_reduce_fx="mean")
-#         self.add_state("count_for_90", default=torch.tensor(0), dist_reduce_fx="mean")
-
-#     def update(self, iou, noc):
-#         if iou == 0.5:
-#             self.noc_for_50 += noc
-#             self.count_for_50 += 1
-#         elif iou == 0.65:
-#             self.noc_for_65 += noc
-#             self.count_for_50 += 1
-#         elif iou == 0.80:
-#             self.noc_for_80 += noc
-#             self.count_for_50 += 1
-#         elif iou == 0.85:
-#             self.noc_for_85 += noc
-#             self.count_for_50 += 1
-#         elif iou == 0.90:
-#             self.noc_for_90 += noc
-#             self.count_for_90 += 1
-#         else:
-#             print("iou not found")
-#             raise ValueError
-
-#     def compute(self):
-#         metrics_dictionary = {}
-
-#         metrics_dictionary[50] = {}
-#         metrics_dictionary[50]["noc"] = self.noc_for_50
-#         metrics_dictionary[50]["count"] = self.count_for_50
-#         metrics_dictionary[65] = {}
-#         metrics_dictionary[65]["noc"] = self.noc_for_65
-#         metrics_dictionary[65]["count"] = self.count_for_65
-#         metrics_dictionary[80] = {}
-#         metrics_dictionary[80]["noc"] = self.noc_for_80
-#         metrics_dictionary[80]["count"] = self.count_for_80
-#         metrics_dictionary[85] = {}
-#         metrics_dictionary[85]["noc"] = self.noc_for_85
-#         metrics_dictionary[85]["count"] = self.count_for_85
-#         metrics_dictionary[90] = {}
-#         metrics_dictionary[90]["noc"] = self.noc_for_90
-#         metrics_dictionary[90]["count"] = self.count_for_90
-
-#         return metrics_dictionary, self.iou_thresholds
+        for _, label in self.label_mapping.items():
+            if self.training:
+                metrics_dictionary[f"training_miou_class/{label}"] = self.__dict__[f"miou_for_{label}"] / self.__dict__[f"count_for_{label}"]
+            else:
+                metrics_dictionary[f"validation_miou_class/{label}"] = self.__dict__[f"miou_for_{label}"] / self.__dict__[f"count_for_{label}"]
+        return metrics_dictionary

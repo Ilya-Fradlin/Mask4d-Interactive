@@ -1,7 +1,7 @@
 # @package _group_
 default_root_dir: ${general.save_dir}
 profiler: simple
-devices: auto
+devices: 2
 num_nodes: 1
 accelerator: gpu
 strategy: ddp_find_unused_parameters_false

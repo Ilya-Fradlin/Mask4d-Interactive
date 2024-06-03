@@ -3,11 +3,11 @@
   verbose: true
   save_top_k: 1
   save_last: true
-  monitor: "mIoU_monitor"
+  monitor: "mIoU_epoch"
   mode: "max"
   dirpath: ${general.save_dir}
   every_n_epochs: 1
-  filename: "{epoch:02d}-{mIoU_monitor:.3f}"
+  filename: "{epoch:02d}-{mIoU_epoch:.3f}"
   save_on_train_epoch_end: true
   # enable_version_counter: false
 
