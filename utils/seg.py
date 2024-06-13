@@ -68,12 +68,72 @@ def mean_iou(pred, labels, obj2label):
     iou_batch /= bs
 
     # Aggregate iou_per_label across batches
-    average_iou_per_label = {
-        label_name: sum(iou_list) / len(iou_list) if iou_list else None for label_name, iou_list in iou_per_label.items()
-    }
+    average_iou_per_label = {label_name: sum(iou_list) / len(iou_list) if iou_list else None for label_name, iou_list in iou_per_label.items()}
     average_iou_per_label = {"miou_class/" + k: v for k, v in average_iou_per_label.items() if v is not None}
 
     return iou_batch, average_iou_per_label
+
+
+def mean_iou_validation(pred, labels, obj2label):
+    """Calculate the mean IoU for a batch"""
+    assert len(pred) == len(labels)
+    bs = len(pred)
+    iou_batch = 0.0
+    label_mapping = {
+        0: "unlabeled",
+        1: "car",
+        2: "bicycle",
+        3: "motorcycle",
+        4: "truck",
+        5: "other-vehicle",
+        6: "person",
+        7: "bicyclist",
+        8: "motorcyclist",
+        9: "road",
+        10: "parking",
+        11: "sidewalk",
+        12: "other-ground",
+        13: "building",
+        14: "fence",
+        15: "vegetation",
+        16: "trunk",
+        17: "terrain",
+        18: "pole",
+        19: "traffic-sign",
+    }
+    iou_per_label = {}  # Initialize IoU for the entire batch
+    objects_info = {}  # Initialize IoU for the entire batch
+    for label_name in label_mapping.values():
+        iou_per_label[label_name] = []
+    for obj_id, panoptic_label in obj2label[0].items():
+        objects_info[obj_id] = {}
+        objects_info[obj_id]["class"] = label_mapping[obj2label[0][obj_id] & 0xFFFF]
+
+    for b in range(bs):
+        pred_sample = pred[b]
+        labels_sample = labels[b]
+        obj_ids = torch.unique(labels_sample)
+        obj_ids = obj_ids[obj_ids != 0]
+        obj_num = len(obj_ids)
+        iou_sample = 0.0
+        for obj_id in obj_ids:
+            original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] & 0xFFFF]
+            obj_iou = mean_iou_single(pred_sample == obj_id, labels_sample == obj_id)
+            objects_info[str(int(obj_id.item()))]["miou"] = obj_iou.item()
+            iou_sample += obj_iou
+            # Accumulate IoU for each original label
+            iou_per_label[original_label].append(obj_iou)
+
+        iou_sample /= obj_num
+        iou_batch += iou_sample
+
+    iou_batch /= bs
+
+    # Aggregate iou_per_label across batches
+    average_iou_per_label = {label_name: sum(iou_list) / len(iou_list) if iou_list else None for label_name, iou_list in iou_per_label.items()}
+    average_iou_per_label = {"miou_class/" + k: v for k, v in average_iou_per_label.items() if v is not None}
+
+    return iou_batch, average_iou_per_label, objects_info
 
 
 def mean_iou_scene(pred, labels):
@@ -190,9 +250,7 @@ def get_next_simulated_click_multi(error_cluster_ids, error_cluster_ids_mask, pr
         pair_distances = error_distances[cluster_id]
 
         # get next click candidate
-        center_id, center_coo, center_gt, max_dist, candidates = get_next_click_random(
-            coords_qv, error, labels_qv, pred_qv, pair_distances
-        )
+        center_id, center_coo, center_gt, max_dist, candidates = get_next_click_random(coords_qv, error, labels_qv, pred_qv, pair_distances)
 
         if click_dict.get(str(int(center_gt))) == None:
             click_dict[str(int(center_gt))] = [int(center_id)]
@@ -284,9 +342,7 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
         else:
             selected_error_cluster_ids = error_cluster_ids_sorted[:1]
 
-    new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi(
-        selected_error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances
-    )
+    new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi(selected_error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances)
 
     return new_clicks, new_click_num, new_click_pos, new_click_time
 

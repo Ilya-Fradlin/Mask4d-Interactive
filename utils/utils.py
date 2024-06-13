@@ -71,7 +71,7 @@ def calculate_bounding_box_corners(min_x, max_x, min_y, max_y, min_z, max_z):
     return corners
 
 
-def generate_wandb_objects3d(raw_coords, labels, pred, click_idx):
+def generate_wandb_objects3d(raw_coords, labels, pred, click_idx, objects_info):
     # Create a mapping from label to color
     unique_labels = torch.unique(labels)
     num_labels = unique_labels.size(0)
@@ -107,8 +107,15 @@ def generate_wandb_objects3d(raw_coords, labels, pred, click_idx):
     boxes_array = []
     # Iterate over each object in sample_click_idx
     for obj, click_indices in click_idx.items():
+        if obj == "0":
+            obj_class = "background/outlier"
+            obj_iou = 0.0
+        else:
+            obj_class = objects_info[obj]["class"]
+            obj_iou = objects_info[obj]["miou"]
         # Extract click points from numpy_array
         click_points = pcd_pred[click_indices]
+        max_clicks_for_obj = len(click_points)
         # Calculate bounding box coordinates
         for i, click in enumerate(click_points):
             min_x, max_x = click[0] - 0.1, click[0] + 0.1
@@ -117,7 +124,7 @@ def generate_wandb_objects3d(raw_coords, labels, pred, click_idx):
 
             current_box_click = {
                 "corners": calculate_bounding_box_corners(min_x, max_x, min_y, max_y, min_z, max_z),
-                "label": f"obj_{obj}_click_{i}",
+                "label": f"obj{obj}-{obj_class}-iou_{obj_iou:.02f}-click_{i}/{max_clicks_for_obj}",
                 "color": [255, 0, 255],
             }
             boxes_array.append(current_box_click)
@@ -134,7 +141,7 @@ def generate_distinct_colors_kmeans(n):
     large_sample = np.random.randint(0, 256, (10000, 3))
 
     # Apply k-means clustering to find n clusters
-    kmeans = KMeans(n_clusters=n).fit(large_sample)
+    kmeans = KMeans(n_clusters=n, n_init=1).fit(large_sample)
     colors = kmeans.cluster_centers_.astype(int)
 
     return [tuple(color) for color in colors]

@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 import utils.misc as utils
 from utils.utils import generate_wandb_objects3d
-from utils.seg import mean_iou, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks
+from utils.seg import mean_iou, mean_iou_validation, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks
 from datasets.utils import VoxelizeCollate
 from datasets.lidar import LidarDataset
 from models import Interactive4D
@@ -51,11 +51,10 @@ class ObjectSegmentation(pl.LightningModule):
         self.mIoU_metric = mIoU_metric()
         self.mIoU_per_class_metric = mIoU_per_class_metric(training=True)
         # Validation metrics
-        self.losses_metric_validation = losses_metric()
-        self.mIoU_metric_validation = mIoU_metric()
-        self.mIoU_per_class_metric_validation = mIoU_per_class_metric(training=False)
+        # self.mIoU_per_class_metric_validation = mIoU_per_class_metric(training=False)
         self.iou_at_numClicks = IoU_at_numClicks(num_clicks=self.config.general.clicks_of_interest)
         self.numClicks_for_IoU = NumClicks_for_IoU(iou_thresholds=self.config.general.iou_targets)
+        self.validation_metric_logger = utils.MetricLogger(delimiter="  ")
 
         self.save_hyperparameters()
 
@@ -179,7 +178,7 @@ class ObjectSegmentation(pl.LightningModule):
         for idx in range(batch_size):
             if len(labels[idx].unique()) < 2:
                 # If there is only the background in the scene, skip the scene
-                print("after quntization, only background in the scene")
+                print("after quantization, only background in the scene")
                 return
 
         ###### interactive evaluation ######
@@ -264,11 +263,13 @@ class ObjectSegmentation(pl.LightningModule):
 
             if current_num_clicks != 0:
                 # mean_iou here is calculated for just with the points responsible for the quantized values!
-                general_miou, label_miou_dict = mean_iou(updated_pred, labels, obj2label)
+                general_miou, label_miou_dict, objects_info = mean_iou_validation(updated_pred, labels, obj2label)
 
-                self.losses_metric_validation.update(sum(loss_dict_reduced_scaled.values()))
-                self.mIoU_metric_validation.update(general_miou)
-                self.mIoU_per_class_metric_validation.update(label_miou_dict)
+                label_miou_dict = {"validation/" + k: v for k, v in label_miou_dict.items()}
+                self.log("validation/full_mIoU", sample_iou, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=True)
+                self.log_dict(label_miou_dict, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
+                self.validation_metric_logger.update(mIoU_quantized=general_miou)
+                self.validation_metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()), **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
 
             if current_num_clicks == 0:
                 new_clicks_num = num_obj[idx]
@@ -278,7 +279,7 @@ class ObjectSegmentation(pl.LightningModule):
 
         pred = 0
 
-        if (self.config.general.experiment_name != "debugging") and (self.trainer.is_global_zero) and (batch_idx % self.config.general.visualization_frequency == 0):  # Condition for visualization logging
+        if (batch_idx % self.config.general.visualization_frequency == 0) or (sample_iou < 0.4):  # Condition for visualization logging
             # choose a random scene to visualize from the batch
             chosen_scene_idx = random.randint(0, batch_size - 1)
             scene_name = scene_names[chosen_scene_idx]
@@ -288,22 +289,24 @@ class ObjectSegmentation(pl.LightningModule):
             sample_labels = labels[chosen_scene_idx]
             sample_click_idx = click_idx[chosen_scene_idx]
 
-            gt_scene, pred_scene = generate_wandb_objects3d(sample_raw_coords, sample_labels, sample_pred, sample_click_idx)
-            wandb.log({f"point_scene/ground_truth_{scene_name}_{batch_idx}": gt_scene})
-            wandb.log({f"point_scene/prediction_{scene_name}_{batch_idx}": pred_scene})
-            # self.config.general.visualization_dir,
+            # general_miou, label_miou_dict, obj2label
+            gt_scene, pred_scene = generate_wandb_objects3d(sample_raw_coords, sample_labels, sample_pred, sample_click_idx, objects_info)
+            if batch_idx % self.config.general.visualization_frequency != 0:
+                wandb.log({f"point_scene/ground_truth_{scene_name}_{batch_idx}": gt_scene})
+                wandb.log({f"point_scene/prediction_{scene_name}_{batch_idx}_miou_{sample_iou}": pred_scene})
+            else:
+                print("Logging visualization data for low mIoU scene")
+                wandb.log({f"point_scene_with_low_miou/ground_truth_{scene_name}_{batch_idx}": gt_scene})
+                wandb.log({f"point_scene_with_low_miou/prediction_{scene_name}_{batch_idx}_miou_{sample_iou}": pred_scene})
+        # self.config.general.visualization_dir,
         # self.validation_step_outputs.append(pred)
 
     def on_validation_epoch_end(self):
         print("\n")
         print("--------- Evaluating Validation Performance  -----------")
-        warnings.filterwarnings(
-            "ignore",
-            message="The ``compute`` method of metric NumClicks_for_IoU was called before the ``update`` method",
-            category=UserWarning,
-        )
+        warnings.filterwarnings("ignore", message="The ``compute`` method of metric NumClicks_for_IoU was called before the ``update`` method", category=UserWarning)
         results_dict = {}
-
+        results_dict["mIoU_quantized"] = self.validation_metric_logger.meters["mIoU_quantized"].global_avg
         # Evaluate the NoC@IoU Metric
         metrics_dictionary, iou_thresholds = self.numClicks_for_IoU.compute()
         for iou in iou_thresholds:
@@ -311,9 +314,9 @@ class ObjectSegmentation(pl.LightningModule):
             count = metrics_dictionary[iou]["count"]
             results_dict[f"scenes_reached_{iou}_iou"] = count.item()
             if count == 0:
-                results_dict[f"validation/Interactive_metrics/NoC@{iou}"] = 0  # or return a default value or raise an error
+                results_dict[f"NoC@{iou}"] = 0  # or return a default value or raise an error
             else:
-                results_dict[f"validation/Interactive_metrics/NoC@{iou}"] = (noc / count).item()
+                results_dict[f"NoC@{iou}"] = (noc / count).item()
 
         # Evaluate the IoU@NoC Metric
         metrics_dictionary, evaluated_num_clicks = self.iou_at_numClicks.compute()
@@ -321,25 +324,39 @@ class ObjectSegmentation(pl.LightningModule):
             iou = metrics_dictionary[noc]["iou"]
             count = metrics_dictionary[noc]["count"]
             if count == 0:
-                results_dict[f"validation/Interactive_metrics/IoU@{noc}"] = 0  # or return a default value or raise an error
+                results_dict[f"IoU@{noc}"] = 0  # or return a default value or raise an error
             else:
-                results_dict[f"validation/Interactive_metrics/IoU@{noc}"] = (iou / count).item()
-
-        miou_epoch = self.mIoU_metric_validation.compute()
-        miou_per_class_epoch = self.mIoU_per_class_metric_validation.compute()
-        losses_epoch = self.losses_metric_validation.compute()
-
-        print("\nValidation Epoch Results:\n")
-        print(f"miou_epoch: {miou_epoch}, losses_epoch: {losses_epoch} \n")
-        print(f"miou_per_class_epoch: {miou_per_class_epoch} \n")
-        print("Interactive_metrics:\n")
+                results_dict[f"IoU@{noc}"] = (iou / count).item()
+        print("\n")
         print(results_dict)
-
-        self.mIoU_metric_validation.reset()
-        self.mIoU_per_class_metric_validation.reset()
-        self.losses_metric_validation.reset()
-        self.iou_at_numClicks.reset()
-        self.numClicks_for_IoU.reset()
+        stats = {k: meter.global_avg for k, meter in self.validation_metric_logger.meters.items()}
+        stats.update(results_dict)
+        self.log_dict(
+            {
+                "validation/epoch": self.current_epoch,
+                "validation/loss_epoch": stats["loss"],
+                "validation/loss_bce_epoch": stats["loss_bce"],
+                "validation/loss_dice_epoch": stats["loss_dice"],
+                "validation/mIoU_quantized_epoch": stats["mIoU_quantized"],
+                "validation/Interactive_metrics/NoC_50": stats["NoC@50"],
+                "validation/Interactive_metrics/scenes_reached_50_iou": stats["scenes_reached_50_iou"],
+                "validation/Interactive_metrics/NoC_65": stats["NoC@65"],
+                "validation/Interactive_metrics/scenes_reached_65_iou": stats["scenes_reached_65_iou"],
+                "validation/Interactive_metrics/NoC_80": stats["NoC@80"],
+                "validation/Interactive_metrics/scenes_reached_80_iou": stats["scenes_reached_80_iou"],
+                "validation/Interactive_metrics/NoC_85": stats["NoC@85"],
+                "validation/Interactive_metrics/scenes_reached_85_iou": stats["scenes_reached_85_iou"],
+                "validation/Interactive_metrics/NoC_90": stats["NoC@90"],
+                "validation/Interactive_metrics/scenes_reached_90_iou": stats["scenes_reached_90_iou"],
+                "validation/Interactive_metrics/IoU_1": stats["IoU@1"],
+                "validation/Interactive_metrics/IoU_2": stats["IoU@2"],
+                "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
+                "validation/Interactive_metrics/IoU_4": stats["IoU@4"],
+                "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
+            }
+        )
+        # self.validation_step_outputs.clear()  # free memory
+        self.validation_metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
 
     def test_step(self, batch, batch_idx):
         # TODO
@@ -355,12 +372,12 @@ class ObjectSegmentation(pl.LightningModule):
         # self.config.optimizer.lr = self.config.optimizer.lr * math.sqrt(self.config.trainer.num_nodes)
         self.config.optimizer.lr = self.config.optimizer.lr * self.config.trainer.num_nodes
         optimizer = AdamW(params=self.parameters(), lr=self.config.optimizer.lr)
-        
+
         # Scehduler:
         steps_per_epoch = math.ceil(len(self.train_dataloader()) / (self.config.trainer.num_devices * self.config.trainer.num_nodes))
         lr_scheduler = OneCycleLR(max_lr=self.config.optimizer.lr, epochs=self.config.trainer.max_epochs, steps_per_epoch=steps_per_epoch, optimizer=optimizer)
         scheduler_config = {"scheduler": lr_scheduler, "interval": "step"}
-        
+
         print(f"optimizer_lr: {self.config.optimizer.lr}, scheduler_steps_per_epoch:{steps_per_epoch}")
         return [optimizer], [scheduler_config]
 

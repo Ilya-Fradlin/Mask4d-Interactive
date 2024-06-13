@@ -28,7 +28,6 @@ def get_parameters(cfg: DictConfig):
     loggers = []
 
     if "debugging" in cfg.general.experiment_name:
-        print("RUNNING IN DEBUGGING MODE", flush=True)
         os.environ["WANDB_MODE"] = "dryrun"
         os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
         os.environ["TORCH_CPP_LOG_LEVEL"] = "INFO"
@@ -44,13 +43,10 @@ def get_parameters(cfg: DictConfig):
         cfg.trainer.num_sanity_val_steps = 0
         cfg.trainer.log_every_n_steps = 1
         cfg.trainer.max_epochs = 30
-        # cfg.trainer.check_val_every_n_epoch = 5
-        cfg.trainer.limit_train_batches = 4  # 0.0002
+        cfg.trainer.check_val_every_n_epoch = 5
+        cfg.trainer.limit_train_batches = 2  # 0.0002
         cfg.trainer.limit_val_batches = 2
-        # ddp
-        cfg.trainer.num_devices = 1
-        cfg.trainer.num_nodes = 1
-        cfg.trainer.accelerator = "gpu"
+        cfg.general.save_dir = os.path.join("saved", cfg.general.experiment_name)
 
         if cfg.general.experiment_name == "debugging-with-logging":
             cfg.general.visualization_frequency = 1
@@ -71,18 +67,18 @@ def get_parameters(cfg: DictConfig):
     else:
         if not os.path.exists(cfg.general.save_dir):
             os.makedirs(cfg.general.save_dir, exist_ok=True)
-        # else:
-        #     print("EXPERIMENT ALREADY EXIST")
-        #     cfg.general.ckpt_path = f"{cfg.general.save_dir}/last-epoch.ckpt"
-        loggers.append(
-            WandbLogger(
-                project=cfg.general.project_name,
-                name=cfg.general.experiment_name,
-                save_dir=cfg.general.save_dir,
-                id=cfg.general.experiment_name,
-                entity="rwth-data-science",
+            # else:
+            #     print("EXPERIMENT ALREADY EXIST")
+            #     cfg.general.ckpt_path = f"{cfg.general.save_dir}/last-epoch.ckpt"
+            loggers.append(
+                WandbLogger(
+                    project=cfg.general.project_name,
+                    name=cfg.general.experiment_name,
+                    save_dir=cfg.general.save_dir,
+                    id=cfg.general.experiment_name,
+                    entity="rwth-data-science",
+                )
             )
-        )
         loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
 
     model = ObjectSegmentation(cfg)
@@ -130,21 +126,21 @@ def train(cfg: DictConfig):
 
 
 def validate(cfg: DictConfig):
-    # because hydra wants to change dir for some reason
-    os.chdir(hydra.utils.get_original_cwd())
     cfg, model, loggers = get_parameters(cfg)
     runner = Trainer(
         logger=loggers,
-        accelerator="gpu",
+        default_root_dir=cfg.general.save_dir,
         devices=1,
-        default_root_dir=str(cfg.general.save_dir),
+        num_nodes=1,
+        accelerator="gpu",
+        check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
+        limit_val_batches=cfg.trainer.limit_train_batches,
     )
-    runner.validate(model=model, ckpt_path=cfg.general.ckpt_path)
+
+    runner.validate(model, ckpt_path=cfg.general.ckpt_path)
 
 
 def test(cfg: DictConfig):
-    # because hydra wants to change dir for some reason
-    os.chdir(hydra.utils.get_original_cwd())
     cfg, model, loggers = get_parameters(cfg)
     runner = Trainer(
         logger=loggers,
@@ -173,8 +169,10 @@ def main():
         train(cfg)
     elif cfg["general"]["mode"] == "validate":
         validate(cfg)
-    else:
+    elif cfg["general"]["mode"] == "test":
         test(cfg)
+    else:
+        raise ValueError(f"Unknown mode: {cfg['general']['mode']}")
 
 
 if __name__ == "__main__":

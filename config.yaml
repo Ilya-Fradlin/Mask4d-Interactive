@@ -11,7 +11,7 @@ general:
   visualization_dir: saved/${general.experiment_name}/pointclouds
   # Frequently Adjusted Parameters
   visualization_frequency: 500
-  ckpt_path: null # i.e. /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt
+  ckpt_path: /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt # null # i.e. /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt
   max_num_clicks: 5
   clicks_of_interest: [1, 2, 3, 4, 5] # another possibility [1, 3, 5, 10, 15, 20]
   iou_targets: [0.5, 0.65, 0.80, 0.85, 0.90]
