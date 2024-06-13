@@ -5,6 +5,14 @@ from typing import Optional
 from torch import Tensor
 
 
+def box_loss(inputs: torch.Tensor, targets: torch.Tensor, num_bboxs: float):
+    loss = F.l1_loss(inputs, targets, reduction="none")
+    return loss.mean(1).sum() / num_bboxs
+
+
+box_loss_jit = torch.jit.script(box_loss)
+
+
 class SetCriterion(nn.Module):
 
     def __init__(self, losses, weight_dict):
@@ -35,13 +43,9 @@ class SetCriterion(nn.Module):
 
         if check_target_validity:
             class_ids = target.unique()
-            assert not torch.any(
-                torch.logical_or(class_ids < 0, class_ids >= num_classes)
-            ), f"Number of classes = {num_classes}, but target has the following class IDs: {class_ids.tolist()}"
+            assert not torch.any(torch.logical_or(class_ids < 0, class_ids >= num_classes)), f"Number of classes = {num_classes}, but target has the following class IDs: {class_ids.tolist()}"
 
-        target = torch.stack([target == cls_id for cls_id in range(0, num_classes)], 1).to(
-            dtype=input.dtype
-        )  # [N, C, *]
+        target = torch.stack([target == cls_id for cls_id in range(0, num_classes)], 1).to(dtype=input.dtype)  # [N, C, *]
 
         if ignore_mask is not None:
             ignore_mask = ignore_mask.unsqueeze(1)
@@ -50,9 +54,7 @@ class SetCriterion(nn.Module):
 
         return self.dice_loss(input, target, eps=eps, ignore_mask=ignore_mask)
 
-    def dice_loss(
-        self, input: Tensor, target: Tensor, ignore_mask: Optional[Tensor] = None, eps: Optional[float] = 1e-6
-    ):
+    def dice_loss(self, input: Tensor, target: Tensor, ignore_mask: Optional[Tensor] = None, eps: Optional[float] = 1e-6):
         """
         Computes the DICE or soft IoU loss.
         :param input: tensor of shape [N, *]
@@ -67,9 +69,7 @@ class SetCriterion(nn.Module):
 
         if torch.is_tensor(ignore_mask):
             assert ignore_mask.dtype == torch.bool
-            assert input.shape == ignore_mask.shape, (
-                f"Shape mismatch between input ({input.shape}) and " f"ignore mask ({ignore_mask.shape})"
-            )
+            assert input.shape == ignore_mask.shape, f"Shape mismatch between input ({input.shape}) and " f"ignore mask ({ignore_mask.shape})"
             input = torch.where(ignore_mask, torch.zeros_like(input), input)
             target = torch.where(ignore_mask, torch.zeros_like(target), target)
 
@@ -108,8 +108,24 @@ class SetCriterion(nn.Module):
         loss = loss / len(pred_masks)
         return {"loss_dice": loss}
 
+    def loss_bboxs(self, outputs, targets, indices):
+        loss_box = torch.zeros(1, device=outputs["pred_bboxs"].device)
+        for batch_id, (map_id, target_id) in enumerate(indices):
+            pred_bboxs = outputs["pred_bboxs"][batch_id, map_id, :]
+            target_bboxs = targets[batch_id]["bboxs"][target_id]
+            target_classes = targets[batch_id]["labels"][target_id]
+            keep_things = target_classes < 8
+            if torch.any(keep_things):
+                target_bboxs = target_bboxs[keep_things]
+                pred_bboxs = pred_bboxs[keep_things]
+                num_bboxs = target_bboxs.shape[0]
+                loss_box += box_loss_jit(pred_bboxs, target_bboxs, num_bboxs)
+        return {
+            "loss_box": loss_box,
+        }
+
     def get_loss(self, loss, outputs, targets, weights=None):
-        loss_map = {"bce": self.loss_bce, "dice": self.loss_dice}
+        loss_map = {"bce": self.loss_bce, "dice": self.loss_dice, "bbox": self.loss_bbox}
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets, weights)
 

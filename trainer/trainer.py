@@ -34,6 +34,7 @@ class ObjectSegmentation(pl.LightningModule):
             # self.config.model.num_queries
             "loss_bce": self.config.loss.bce_loss_coef,
             "loss_dice": self.config.loss.dice_loss_coef,
+            "loss_bbox": self.config.loss.bbox_loss_coef,
         }
 
         # TODO: check this aux loss
@@ -42,7 +43,7 @@ class ObjectSegmentation(pl.LightningModule):
             for i in range(self.interactive4d.num_decoders * self.interactive4d.num_levels):
                 aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
             weight_dict.update(aux_weight_dict)
-        self.criterion = SetCriterion(losses=["bce", "dice"], weight_dict=weight_dict)
+        self.criterion = SetCriterion(losses=["bce", "dice", "bbox"], weight_dict=weight_dict)
 
         # Initiatie the monitoring metric
         self.log("mIoU_monitor", 0, sync_dist=True, logger=False)

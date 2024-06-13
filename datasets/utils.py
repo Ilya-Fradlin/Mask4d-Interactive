@@ -95,6 +95,29 @@ def generate_target(features, labels, original_labels, ignore_label, inverse_map
     target["unique_maps"] = unique_maps
     target["obj2labels"] = obj2labels
 
+    # Prepare bounding boxes
+    batch_bboxs = []
+    for feat, lb in zip(features, labels):
+        scene_bboxs = {}
+        obj_in_scene = lb.unique()
+        raw_coords = feat[:, :3]
+        raw_coords = (raw_coords - raw_coords.min(0)[0]) / (raw_coords.max(0)[0] - raw_coords.min(0)[0])
+        for obj in obj_in_scene:
+            if obj == 0:
+                continue
+            mask = lb == obj
+            mask_coords = raw_coords[mask, :]
+            obj_bbox = torch.hstack((mask_coords.mean(0), mask_coords.max(0)[0] - mask_coords.min(0)[0]))
+            scene_bboxs[int(obj)] = obj_bbox
+        batch_bboxs.append(scene_bboxs)
+
+        # if len(mask_labels) != 0:
+        #     mask_labels = torch.stack(mask_labels)
+        #     binary_masks = torch.stack(binary_masks)
+        #     bboxs = torch.stack(bboxs)
+        #     target.append({"labels": mask_labels, "masks": binary_masks, "bboxs": bboxs})
+    target["bboxs"] = batch_bboxs
+
     return target
 
     # for feat, lb in zip(features, labels, original_labels):

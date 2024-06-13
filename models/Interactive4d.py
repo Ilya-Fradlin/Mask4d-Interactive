@@ -58,9 +58,7 @@ class Interactive4D(nn.Module):
         self.bg_query_feat = nn.Embedding(num_bg_queries, self.mask_dim)
         self.bg_query_pos = nn.Embedding(num_bg_queries, self.mask_dim)
 
-        self.mask_embed_head = nn.Sequential(
-            nn.Linear(self.mask_dim, self.mask_dim), nn.ReLU(), nn.Linear(self.mask_dim, self.mask_dim)
-        )
+        self.mask_embed_head = nn.Sequential(nn.Linear(self.mask_dim, self.mask_dim), nn.ReLU(), nn.Linear(self.mask_dim, self.mask_dim))
 
         self.pos_enc = PositionEmbeddingCoordsSine(pos_type="fourier", d_pos=hidden_dim, gauss_scale=1.0, normalize=True)
 
@@ -139,9 +137,7 @@ class Interactive4D(nn.Module):
         if feats is None:
             pcd_features, aux, coordinates, pos_encodings_pcd = self.forward_backbone(x, raw_coordinates, is_eval)
 
-        outputs = self.forward_mask(
-            pcd_features, aux, coordinates, pos_encodings_pcd, click_idx=click_idx, click_time_idx=click_time_idx
-        )
+        outputs = self.forward_mask(pcd_features, aux, coordinates, pos_encodings_pcd, click_idx=click_idx, click_time_idx=click_time_idx)
         pred_logits = outputs["pred_masks"]
         pred = [p.argmax(-1) for p in pred_logits]
 
@@ -173,6 +169,7 @@ class Interactive4D(nn.Module):
         batch_size = pcd_features.C[:, 0].max() + 1
 
         predictions_mask = [[] for i in range(batch_size)]
+        bboxs = [{} for i in range(batch_size)]
 
         bg_learn_queries = self.bg_query_feat.weight.unsqueeze(0).repeat(batch_size, 1, 1)
         bg_learn_query_pos = self.bg_query_pos.weight.unsqueeze(0).repeat(batch_size, 1, 1)
@@ -192,14 +189,10 @@ class Interactive4D(nn.Module):
             fg_query_num_split = [len(click_idx_sample[str(i)]) for i in range(1, fg_obj_num + 1)]
             fg_query_num = sum(fg_query_num_split)
 
-            fg_clicks_coords = torch.vstack(
-                [coordinates.decomposed_features[b][click_idx_sample[str(i)], :] for i in range(1, fg_obj_num + 1)]
-            ).unsqueeze(0)
+            fg_clicks_coords = torch.vstack([coordinates.decomposed_features[b][click_idx_sample[str(i)], :] for i in range(1, fg_obj_num + 1)]).unsqueeze(0)
             fg_query_pos = self.pos_enc(fg_clicks_coords.float(), input_range=[mins, maxs])
 
-            fg_clicks_time_idx = list(
-                itertools.chain.from_iterable([click_time_idx_sample[str(i)] for i in range(1, fg_obj_num + 1)])
-            )
+            fg_clicks_time_idx = list(itertools.chain.from_iterable([click_time_idx_sample[str(i)] for i in range(1, fg_obj_num + 1)]))
             fg_query_time = self.time_encode[fg_clicks_time_idx].T.unsqueeze(0).to(fg_query_pos.device)
             fg_query_pos = fg_query_pos + fg_query_time
 
@@ -218,9 +211,7 @@ class Interactive4D(nn.Module):
 
             bg_query_num = bg_query_pos.shape[0]
             # with torch.no_grad():
-            fg_queries = torch.vstack(
-                [pcd_features.decomposed_features[b][click_idx_sample[str(i)], :] for i in range(1, fg_obj_num + 1)]
-            )
+            fg_queries = torch.vstack([pcd_features.decomposed_features[b][click_idx_sample[str(i)], :] for i in range(1, fg_obj_num + 1)])
 
             if len(bg_click_idx) != 0:
                 # with torch.no_grad():
@@ -274,17 +265,37 @@ class Interactive4D(nn.Module):
 
                     fg_queries, bg_queries = queries.split([fg_query_num, bg_query_num], 0)
 
-                    outputs_mask, attn_mask = self.mask_module(
-                        fg_queries, bg_queries, src_pcd, ret_attn_mask=True, fg_query_num_split=fg_query_num_split
-                    )
+                    outputs_mask, attn_mask = self.mask_module(fg_queries, bg_queries, src_pcd, ret_attn_mask=True, fg_query_num_split=fg_query_num_split)
 
                     predictions_mask[b].append(outputs_mask)
-
                     refine_time += 1
 
+        # generate the bboxs
         predictions_mask = [list(i) for i in zip(*predictions_mask)]
+        pred = [p.argmax(-1) for p in predictions_mask[-1]]
+        previous_scene_end_idx = 0
+        for b, scene_pred in enumerate(pred):
+            scene_len = scene_pred.shape[0]
+            scene_raw_coords = coordinates.features[previous_scene_end_idx : previous_scene_end_idx + scene_len]
+            previous_scene_end_idx = previous_scene_end_idx + scene_len
+            for obj in click_idx[b].keys():
+                scene_pred
+                bboxs[b][int(obj)] = obj_bbox
 
-        out = {"pred_masks": predictions_mask[-1], "backbone_features": pcd_features}
+                scene_bboxs = {}
+                obj_in_scene = lb.unique()
+                raw_coords = feat[:, :3]
+                raw_coords = (raw_coords - raw_coords.min(0)[0]) / (raw_coords.max(0)[0] - raw_coords.min(0)[0])
+                for obj in obj_in_scene:
+                    if obj == 0:
+                        continue
+                    mask = lb == obj
+                    mask_coords = raw_coords[mask, :]
+                    obj_bbox = torch.hstack((mask_coords.mean(0), mask_coords.max(0)[0] - mask_coords.min(0)[0]))
+                    scene_bboxs[int(obj)] = obj_bbox
+                batch_bboxs.append(scene_bboxs)
+
+        out = {"pred_masks": predictions_mask[-1], "backbone_features": pcd_features, "bboxs": bboxs}
 
         if self.aux:
             out["aux_outputs"] = self._set_aux_loss(predictions_mask)

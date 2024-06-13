@@ -1,5 +1,5 @@
 general:
-  mode: "validate"
+  mode: "train"
   gpus: null
   seed: 42
   project_name: Mask4D-Interactive
@@ -43,7 +43,7 @@ data:
   dataloader:
     pin_memory: true
     num_workers: 4
-    batch_size: 1
+    batch_size: 2
     test_batch_size: 1
     voxel_size: 0.05
 
@@ -54,3 +54,4 @@ loss:
   aux: true
   bce_loss_coef: 1.0
   dice_loss_coef: 2.0
+  bbox_loss_coef: 1.0
