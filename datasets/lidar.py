@@ -1,6 +1,6 @@
 import numpy as np
 import volumentations as V
-import torch
+import csv
 import yaml
 import json
 from torch.utils.data import Dataset
@@ -44,6 +44,24 @@ class LidarDataset(Dataset):
         with open(database_file) as json_file:
             self.data = json.load(json_file)
         self.label_info = self._select_correct_labels(self.config["learning_ignore"])
+
+        # Id evaluating thing only- remove scenes with no things
+        if obj_type == "things":
+            csv_file_path = "datasets/preprocessing/corrupted_scenes.csv"
+            sequences_with_no_things = set()
+            with open(csv_file_path, mode="r") as file:
+                csv_reader = csv.reader(file)
+                for row in csv_reader:
+                    if row[0] == "scene":
+                        continue
+                    sequences_with_no_things.add((row[0], row[1]))
+                keys_to_remove = []
+                for key in self.data.keys():
+                    _, scene, sequence = key.split("_")
+                    if (scene, sequence) in sequences_with_no_things:
+                        keys_to_remove.append(key)
+                for key in keys_to_remove:
+                    del self.data[key]
 
         # reformulating in sweeps
         data = [[]]
@@ -180,9 +198,7 @@ class LidarDataset(Dataset):
         if "validation" in self.mode and not self.segment_full_scene:
             if self.obj_type != "all":
                 # we need to keep only the things or only the stuff
-                scan["clicks"], scan["obj"] = self.select_only_desired_objects_subsampled(
-                    self.obj_type, scan["obj"], scan["clicks"]
-                )
+                scan["clicks"], scan["obj"] = self.select_only_desired_objects_subsampled(self.obj_type, scan["obj"], scan["clicks"])
             obj_labels = np.zeros(panoptic_labels.shape)
             for obj_idx, label in scan["obj"].items():
                 obj_labels[panoptic_labels == label] = int(obj_idx)
