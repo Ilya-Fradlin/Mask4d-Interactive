@@ -155,7 +155,7 @@ class LidarDataset(Dataset):
         # 11: 10, 12: 11, 13: 12, 14: 13, 15: 14, 16: 15, 17: 16, 18: 17, 19: 18}
 
         return {
-            "sequence": scan["scene"],
+            "sequence": scan["filepath"],
             "num_points": acc_num_points,
             "coordinates": coordinates,
             "features": features,  # (coordinates, time, intensity, distance)
@@ -217,8 +217,10 @@ class LidarDataset(Dataset):
         return obj_labels, obj2label_map, click_idx
 
     def select_only_desired_objects(self, obj_type, unique_panoptic_labels):
-        things_labels = [label for label in unique_panoptic_labels if label >> 16 != 0]
-        stuff_labels = [label for label in unique_panoptic_labels if label >> 16 == 0]
+        things_targets = [1, 2, 3, 4, 5, 6, 7, 8]  # [1:car,  2:bicycle,  3:motorcycle,  4:truck,  5:other-vehicle,  6:person,  7:bicyclist,  8:motorcyclist ]
+        stuff_targets = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]  #  [9:road,  10:parking, 11:sidewalk ,12:other-ground ,13:building ,14:fence ,15:vegetation ,16:trunk ,17:terrain ,18:pole ,19:traffic-sign]
+        things_labels = [label for label in unique_panoptic_labels if label & 0xFFFF in things_targets]
+        stuff_labels = [label for label in unique_panoptic_labels if label & 0xFFFF in stuff_targets]
         desired_objects = {"things": things_labels, "stuff": stuff_labels}.get(obj_type)
         if desired_objects is None:
             raise ValueError(f"Unknown obj_type {obj_type}")
@@ -228,9 +230,11 @@ class LidarDataset(Dataset):
         click_idx = {}
         updated_obj = {}
         obj_idx = 1  # 0 is background
+        things_targets = [1, 2, 3, 4, 5, 6, 7, 8]  # [1:car,  2:bicycle,  3:motorcycle,  4:truck,  5:other-vehicle,  6:person,  7:bicyclist,  8:motorcyclist ]
+        stuff_targets = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]  #  [9:road,  10:parking, 11:sidewalk ,12:other-ground ,13:building ,14:fence ,15:vegetation ,16:trunk ,17:terrain ,18:pole ,19:traffic-sign]
         for label in selected_obj.values():
-            instance_id = label >> 16
-            if (obj_type == "things" and instance_id != 0) or (obj_type == "stuff" and instance_id == 0):
+            semantic_id = label & 0xFFFF
+            if (obj_type == "things" and semantic_id in things_targets) or (obj_type == "stuff" and semantic_id in stuff_targets):
                 updated_obj[str(obj_idx)] = label
                 click_idx[str(obj_idx)] = []
                 obj_idx += 1

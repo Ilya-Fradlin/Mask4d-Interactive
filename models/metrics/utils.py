@@ -5,6 +5,7 @@ from torchmetrics import Metric
 
 class IoU_at_numClicks(Metric):
     higher_is_better = True
+    full_state_update = True
 
     def __init__(self, num_clicks=[1, 2, 3, 4, 5]):
         super().__init__()
@@ -35,6 +36,7 @@ class IoU_at_numClicks(Metric):
 
 
 class NumClicks_for_IoU(Metric):
+    full_state_update = True
 
     def __init__(self, iou_thresholds=[0.50, 0.65, 0.80, 0.85, 0.90]):
         super().__init__()
@@ -66,6 +68,7 @@ class NumClicks_for_IoU(Metric):
 
 class mIoU_metric(Metric):
     higher_is_better = True
+    full_state_update = True
 
     def __init__(self):
         super().__init__()
@@ -82,6 +85,7 @@ class mIoU_metric(Metric):
 
 class losses_metric(Metric):
     higher_is_better = False
+    full_state_update = True
 
     def __init__(self):
         super().__init__()
@@ -98,6 +102,7 @@ class losses_metric(Metric):
 
 class mIoU_per_class_metric(Metric):
     higher_is_better = True
+    full_state_update = True
 
     def __init__(self, training = True):
         super().__init__()

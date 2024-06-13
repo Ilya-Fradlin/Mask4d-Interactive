@@ -28,6 +28,7 @@ def get_parameters(cfg: DictConfig):
     loggers = []
 
     if "debugging" in cfg.general.experiment_name:
+        print("RUNNING IN DEBUGGING MODE", flush=True)
         os.environ["WANDB_MODE"] = "dryrun"
         os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
         os.environ["TORCH_CPP_LOG_LEVEL"] = "INFO"
@@ -43,14 +44,18 @@ def get_parameters(cfg: DictConfig):
         cfg.trainer.num_sanity_val_steps = 0
         cfg.trainer.log_every_n_steps = 1
         cfg.trainer.max_epochs = 30
-        cfg.trainer.check_val_every_n_epoch = 5
-        cfg.trainer.limit_train_batches = 2  # 0.0002
+        # cfg.trainer.check_val_every_n_epoch = 5
+        cfg.trainer.limit_train_batches = 4  # 0.0002
         cfg.trainer.limit_val_batches = 2
+        # ddp
+        cfg.trainer.num_devices = 1
+        cfg.trainer.num_nodes = 1
+        cfg.trainer.accelerator = "gpu"
 
         if cfg.general.experiment_name == "debugging-with-logging":
             cfg.general.visualization_frequency = 1
             if not os.path.exists(cfg.general.save_dir):
-                os.makedirs(cfg.general.save_dir)
+                os.makedirs(cfg.general.save_dir, exist_ok=True)
 
             loggers.append(
                 WandbLogger(
@@ -65,20 +70,19 @@ def get_parameters(cfg: DictConfig):
 
     else:
         if not os.path.exists(cfg.general.save_dir):
-            os.makedirs(cfg.general.save_dir)
-        else:
-            print("EXPERIMENT ALREADY EXIST")
-            cfg.general.ckpt_path = f"{cfg.general.save_dir}/last-epoch.ckpt"
-
-            loggers.append(
-                WandbLogger(
-                    project=cfg.general.project_name,
-                    name=cfg.general.experiment_name,
-                    save_dir=cfg.general.save_dir,
-                    id=cfg.general.experiment_name,
-                    entity="rwth-data-science",
-                )
+            os.makedirs(cfg.general.save_dir, exist_ok=True)
+        # else:
+        #     print("EXPERIMENT ALREADY EXIST")
+        #     cfg.general.ckpt_path = f"{cfg.general.save_dir}/last-epoch.ckpt"
+        loggers.append(
+            WandbLogger(
+                project=cfg.general.project_name,
+                name=cfg.general.experiment_name,
+                save_dir=cfg.general.save_dir,
+                id=cfg.general.experiment_name,
+                entity="rwth-data-science",
             )
+        )
         loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
 
     model = ObjectSegmentation(cfg)

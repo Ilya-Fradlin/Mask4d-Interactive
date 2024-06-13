@@ -11,4 +11,5 @@ __pycache__/
 /wandb
 /datasets/preprocessing/*.json
 /datasets/preprocessing/*.yaml
+third_party/pointnet2/*
 # third_party/

@@ -190,7 +190,7 @@ def get_next_simulated_click_multi(error_cluster_ids, error_cluster_ids_mask, pr
         pair_distances = error_distances[cluster_id]
 
         # get next click candidate
-        center_id, center_coo, center_gt, max_dist, candidates = get_next_click_coo_torch(
+        center_id, center_coo, center_gt, max_dist, candidates = get_next_click_random(
             coords_qv, error, labels_qv, pred_qv, pair_distances
         )
 

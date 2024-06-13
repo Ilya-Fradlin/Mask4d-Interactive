@@ -6,7 +6,7 @@ general:
   workspace: Ilyafr97
   instance_population: 20
   dbscan_eps: null
-  experiment_name: now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
+  experiment_name: now-batch_size_4_things_only_test # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
   save_dir: saved/${general.experiment_name}
   visualization_dir: saved/${general.experiment_name}/pointclouds
   # Frequently Adjusted Parameters
@@ -21,7 +21,7 @@ trainer:
   num_nodes: 1
   accelerator: auto
   max_epochs: 30
-  check_val_every_n_epoch: 5
+  check_val_every_n_epoch: 50
   log_every_n_steps: 100
   detect_anomaly: false
   limit_train_batches: null
@@ -30,7 +30,7 @@ trainer:
 data:
   ignore_label: 255
   datasets:
-    data_dir: /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti # /p/project/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing
+    data_dir: /p/project/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing # /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti
     sample_choice_train: full # full / subsampled / short
     sample_choice_validation: short # full / subsampled / short
     obj_type: all # things, stuff, all

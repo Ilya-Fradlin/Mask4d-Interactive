@@ -65,7 +65,6 @@ class ObjectSegmentation(pl.LightningModule):
         return x
 
     def training_step(self, batch, batch_idx):
-
         data, target = batch
 
         coords = data["coordinates"]
@@ -83,7 +82,8 @@ class ObjectSegmentation(pl.LightningModule):
         for idx in range(batch_size):
             if len(labels[idx].unique()) < 2:
                 # If there is only the background in the scene, skip the scene
-                print("after quntization, only background in the scene")
+                print("after quantization, only background in the scene")
+                print(f"From Rank: {self.global_rank}, The corrupted scene is: '{data['scene_names'][idx]}'!")
                 return None
 
         data = ME.SparseTensor(coordinates=coords, features=feats, device=self.device)
@@ -351,13 +351,17 @@ class ObjectSegmentation(pl.LightningModule):
 
     def configure_optimizers(self):
         # Adjust the learning rate based on the number of GPUs
-        # self.config.optimizer.lr = self.config.optimizer.lr * math.sqrt(self.trainer.num_devices)
-        # self.config.scheduler.scheduler.max_lr = self.config.optimizer.lr
+        # Optimizer:
+        # self.config.optimizer.lr = self.config.optimizer.lr * math.sqrt(self.config.trainer.num_nodes)
+        self.config.optimizer.lr = self.config.optimizer.lr * self.config.trainer.num_nodes
         optimizer = AdamW(params=self.parameters(), lr=self.config.optimizer.lr)
-        steps_per_epoch = math.ceil(len(self.train_dataloader()) / self.trainer.num_devices)
+        
+        # Scehduler:
+        steps_per_epoch = math.ceil(len(self.train_dataloader()) / (self.config.trainer.num_devices * self.config.trainer.num_nodes))
         lr_scheduler = OneCycleLR(max_lr=self.config.optimizer.lr, epochs=self.config.trainer.max_epochs, steps_per_epoch=steps_per_epoch, optimizer=optimizer)
         scheduler_config = {"scheduler": lr_scheduler, "interval": "step"}
-        print(f"optimizer_max_lr: {self.config.optimizer.lr}, steps_per_epoch:{steps_per_epoch}")
+        
+        print(f"optimizer_lr: {self.config.optimizer.lr}, scheduler_steps_per_epoch:{steps_per_epoch}")
         return [optimizer], [scheduler_config]
 
     def setup(self, stage):
@@ -388,13 +392,15 @@ class ObjectSegmentation(pl.LightningModule):
         # self.test_dataset = hydra.utils.instantiate(self.config.data.test_dataset)
 
     def train_dataloader(self):
-        print(f"num devices: {self.trainer.num_devices}")
-        print(f"train_dataloader - batch_size: {self.config.data.dataloader.batch_size}, effective_batch_size: {self.config.data.dataloader.batch_size * self.trainer.num_devices}, num_workers: {self.config.data.dataloader.num_workers}")
+        effective_batch_size = self.config.data.dataloader.batch_size * self.config.trainer.num_devices * self.config.trainer.num_nodes
+        print(f"num devices (self.trainer.num_devices): {self.trainer.num_devices}")
+        print(f"train_dataloader - batch_size: {self.config.data.dataloader.batch_size}, effective_batch_size: {effective_batch_size}, num_workers: {self.config.data.dataloader.num_workers}")
         c_fn = VoxelizeCollate(mode="train", ignore_label=self.config.data.ignore_label, voxel_size=self.config.data.voxel_size)
         return DataLoader(self.train_dataset, shuffle=True, pin_memory=self.config.data.dataloader.pin_memory, num_workers=self.config.data.dataloader.num_workers, batch_size=self.config.data.dataloader.batch_size, collate_fn=c_fn)
 
     def val_dataloader(self):
-        print(f"val_dataloader - batch_size: {self.config.data.dataloader.test_batch_size}, effective_batch_size: {self.config.data.dataloader.test_batch_size * self.trainer.num_devices}, num_workers: {self.config.data.dataloader.num_workers}")
+        effective_batch_size = self.config.data.dataloader.test_batch_size * self.config.trainer.num_devices * self.config.trainer.num_nodes
+        print(f"val_dataloader - batch_size: {self.config.data.dataloader.test_batch_size}, effective_batch_size: {effective_batch_size}, num_workers: {self.config.data.dataloader.num_workers}")
         c_fn = VoxelizeCollate(mode="validation", ignore_label=self.config.data.ignore_label, voxel_size=self.config.data.voxel_size)
         return DataLoader(self.validation_dataset, shuffle=False, pin_memory=self.config.data.dataloader.pin_memory, num_workers=self.config.data.dataloader.num_workers, batch_size=self.config.data.dataloader.test_batch_size, collate_fn=c_fn)
 
@@ -476,7 +482,7 @@ class ObjectSegmentation(pl.LightningModule):
             obj_to_remove.extend((i, key) for key in click_idx[i] if int(key) not in unique_labels_after_qunatization)
 
         if obj_to_remove:
-            print("Removing objects from the scene due to quantization")
+            # print("Removing objects from the scene due to quantization")
             for i, key in obj_to_remove:
                 del click_idx[i][key]
                 del obj2label[i][key]
