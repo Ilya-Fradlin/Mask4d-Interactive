@@ -95,45 +95,25 @@ def generate_target(features, labels, original_labels, ignore_label, inverse_map
     target["unique_maps"] = unique_maps
     target["obj2labels"] = obj2labels
 
+    # Prepare bounding boxes
+    batch_bboxs = []
+    for feat, lb in zip(features, labels):
+        scene_bboxs = {}
+        obj_in_scene = lb.unique()
+        raw_coords = feat[:, :3]
+        raw_coords = (raw_coords - raw_coords.min(0)[0]) / (raw_coords.max(0)[0] - raw_coords.min(0)[0])
+        for obj in obj_in_scene:
+            if obj == 0:
+                continue
+            mask = lb == obj
+            mask_coords = raw_coords[mask, :]
+            obj_bbox = torch.hstack((mask_coords.mean(0), mask_coords.max(0)[0] - mask_coords.min(0)[0]))
+            scene_bboxs[int(obj)] = obj_bbox
+        batch_bboxs.append(scene_bboxs)
+
+    target["bboxs"] = batch_bboxs
+
     return target
-
-    # for feat, lb in zip(features, labels, original_labels):
-    # raw_coords = feat[:, :3]
-    # raw_coords = (raw_coords - raw_coords.min(0)[0]) / (raw_coords.max(0)[0] - raw_coords.min(0)[0])
-    # mask_labels = []
-    # binary_masks = []
-    # bboxs = []
-
-    # panoptic_labels = lb[:, 1].unique()
-    # for panoptic_label in panoptic_labels:
-    #     mask = lb[:, 1] == panoptic_label
-
-    #     if panoptic_label == 0:
-    #         continue
-
-    #     sem_labels = lb[mask, 0]
-    #     if sem_labels[0] != ignore_label:
-    #         mask_labels.append(sem_labels[0])
-    #         binary_masks.append(mask)
-    #         mask_coords = raw_coords[mask, :]
-    #         bboxs.append(
-    #             torch.hstack(
-    #                 (
-    #                     mask_coords.mean(0),
-    #                     mask_coords.max(0)[0] - mask_coords.min(0)[0],
-    #                 )
-    #             )
-    #         )
-
-    # if len(mask_labels) != 0:
-    #     mask_labels = torch.stack(mask_labels)
-    #     binary_masks = torch.stack(binary_masks)
-    #     bboxs = torch.stack(bboxs)
-    #     target.append(
-    #         {"labels": mask_labels, "original_labels": original_labels, "masks": binary_masks, "bboxs": bboxs}
-    #     )
-
-    # return target
 
 
 def generate_collated_data(

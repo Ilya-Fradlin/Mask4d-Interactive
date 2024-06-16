@@ -34,6 +34,7 @@ class ObjectSegmentation(pl.LightningModule):
             # self.config.model.num_queries
             "loss_bce": self.config.loss.bce_loss_coef,
             "loss_dice": self.config.loss.dice_loss_coef,
+            "loss_bbox": self.config.loss.bbox_loss_coef,
         }
 
         # TODO: check this aux loss
@@ -42,7 +43,7 @@ class ObjectSegmentation(pl.LightningModule):
             for i in range(self.interactive4d.num_decoders * self.interactive4d.num_levels):
                 aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
             weight_dict.update(aux_weight_dict)
-        self.criterion = SetCriterion(losses=["bce", "dice"], weight_dict=weight_dict)
+        self.criterion = SetCriterion(losses=["bce", "dice", "bbox"], weight_dict=weight_dict)
 
         # Initiatie the monitoring metric
         self.log("mIoU_monitor", 0, sync_dist=True, logger=False)
@@ -75,7 +76,7 @@ class ObjectSegmentation(pl.LightningModule):
         batch_indicators = coords[:, 0]
         batch_size = batch_indicators.max() + 1
 
-        click_idx, obj2label, labels = self.verify_labels_post_quantization(labels, click_idx, obj2label, batch_size)
+        click_idx, obj2label, labels, bboxs_target = self.verify_labels_post_quantization(labels, target["bboxs"], click_idx, obj2label, batch_size)
 
         # Check if there is more than just the background in the scene
         for idx in range(batch_size):
@@ -109,7 +110,7 @@ class ObjectSegmentation(pl.LightningModule):
 
         ######### 3. loss back propagation #########
         click_weights = cal_click_loss_weights(batch_indicators, raw_coords, torch.cat(labels), click_idx)
-        loss_dict = self.criterion(outputs, labels, click_weights)
+        loss_dict = self.criterion(outputs, labels, bboxs_target, obj2label, click_weights)
         weight_dict = self.criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
@@ -171,7 +172,7 @@ class ObjectSegmentation(pl.LightningModule):
         current_num_clicks = 0
 
         # Remove objects which are not in the scene (due to quantization)
-        click_idx, obj2label, labels = self.verify_labels_post_quantization(labels, click_idx, obj2label, batch_size)
+        click_idx, obj2label, labels, bboxs_target = self.verify_labels_post_quantization(labels, target["bboxs"], click_idx, obj2label, batch_size)
         click_time_idx = copy.deepcopy(click_idx)
 
         # Check if there is more than just the background in the scene
@@ -207,7 +208,7 @@ class ObjectSegmentation(pl.LightningModule):
 
             if current_num_clicks != 0:
                 click_weights = cal_click_loss_weights(batch_indicators, raw_coords, torch.cat(labels), click_idx)
-                loss_dict = self.criterion(outputs, labels, click_weights)
+                loss_dict = self.criterion(outputs, labels, bboxs_target, obj2label, click_weights)
                 weight_dict = self.criterion.weight_dict
                 losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
@@ -490,7 +491,7 @@ class ObjectSegmentation(pl.LightningModule):
 
             return click_idx, click_time_idx
 
-    def verify_labels_post_quantization(self, labels, click_idx, obj2label, batch_size):
+    def verify_labels_post_quantization(self, labels, bboxs_target, click_idx, obj2label, batch_size):
         # Remove objects which are not in the scene (due to quantization) and update the labels accordingly
         obj_to_remove = []
         for i in range(batch_size):
@@ -512,4 +513,9 @@ class ObjectSegmentation(pl.LightningModule):
                 for old_id, new_id in mapping.items():
                     labels[i][labels[i] == int(old_id)] = new_id
 
-        return click_idx, obj2label, labels
+                # Update the corresponding bboxs_target
+                sorted_keys = sorted(bboxs_target[i].keys())
+                key_mapping = {old_key: new_key for new_key, old_key in enumerate(sorted_keys, start=1)}
+                bboxs_target[i] = {key_mapping[old_key]: value for old_key, value in bboxs_target[i].items()}
+
+        return click_idx, obj2label, labels, bboxs_target
