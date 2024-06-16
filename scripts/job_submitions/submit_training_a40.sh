@@ -27,4 +27,4 @@ export NCCL_SOCKET_IFNAME=en,eth,em,bond
 # --signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_batch_size_4_bbox.txt scripts/train.sh
 
 sbatch --partition=a40-lo -c 16 --gres=gpu:1 --ntasks-per-node=1 --mem=48G --job-name=training --time=10-00:00:00 \
---signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_batch_size_4_bbox_no_cuda_blocking_unpinned_mem.txt scripts/train.sh
+--signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_batch_size_4_bbox.txt scripts/train.sh

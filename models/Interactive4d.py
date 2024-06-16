@@ -66,6 +66,9 @@ class Interactive4D(nn.Module):
 
         self.masked_transformer_decoder = nn.ModuleList()
 
+        # Projection of backbone features into the mask dimension
+        self.lin_squeeze = nn.ModuleList()
+
         # Click-to-scene attention
         self.c2s_attention = nn.ModuleList()
 
@@ -81,6 +84,7 @@ class Interactive4D(nn.Module):
         num_uniq_decoders = self.num_decoders if not self.shared_decoder else 1
 
         for _ in range(num_uniq_decoders):
+            tmp_lin_squeeze = nn.ModuleList()
             tmp_c2s_attention = nn.ModuleList()
             tmp_s2c_attention = nn.ModuleList()
             tmp_c2c_attention = nn.ModuleList()
@@ -88,6 +92,10 @@ class Interactive4D(nn.Module):
 
             for i, hlevel in enumerate(range(self.num_levels)):
                 # TODO: adjust the number of levels  (1->4?)
+                tmp_lin_squeeze.append(
+                    nn.Linear(sizes[hlevel], self.mask_dim),
+                )
+
                 tmp_c2s_attention.append(
                     CrossAttentionLayer(
                         d_model=self.mask_dim,
@@ -292,32 +300,6 @@ class Interactive4D(nn.Module):
 
                     refine_time += 1
             previous_scene_end_idx = previous_scene_end_idx + scene_len
-
-        # # generate the bboxs
-        # bboxs = []
-        # pred = [p.argmax(-1) for p in outputs_mask]
-        # previous_scene_end_idx = 0
-        # for b, scene_pred in enumerate(pred):
-        #     scene_len = scene_pred.shape[0]
-        #     scene_raw_coords = coordinates.features[previous_scene_end_idx : previous_scene_end_idx + scene_len]
-        #     scene_raw_coords = (scene_raw_coords - scene_raw_coords.min(0)[0]) / (scene_raw_coords.max(0)[0] - scene_raw_coords.min(0)[0])
-
-        #     scene_bboxs = {}
-        #     for obj in click_idx[b].keys():
-        #         obj = int(obj)
-        #         if obj == 0:
-        #             continue
-        #         mask = scene_pred == obj
-        #         mask_coords = scene_raw_coords[mask, :]
-        #         if len(mask_coords) == 0:
-        #             obj_bbox = torch.tensor((0, 0, 0, 0, 0, 0))
-        #         else:
-        #             obj_bbox = torch.hstack((mask_coords.mean(0), mask_coords.max(0)[0] - mask_coords.min(0)[0]))
-        #         scene_bboxs[obj] = obj_bbox
-
-        #     previous_scene_end_idx = previous_scene_end_idx + scene_len
-        #     bboxs.append(scene_bboxs)
-        # predictions_bbox[b].append(bboxs)
 
         predictions_mask = [list(i) for i in zip(*predictions_mask)]
         predictions_bbox = [list(i) for i in zip(*predictions_bbox)]
