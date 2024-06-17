@@ -4,14 +4,13 @@ general:
   seed: 42
   project_name: Mask4D-Interactive
   workspace: Ilyafr97
-  instance_population: 20
   dbscan_eps: null
-  experiment_name: now-batch_size_4_things_only_test # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
+  experiment_name: now-batch_size_4_things_augmentation # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
   save_dir: saved/${general.experiment_name}
   visualization_dir: saved/${general.experiment_name}/pointclouds
   # Frequently Adjusted Parameters
   visualization_frequency: 500
-  ckpt_path: /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt # null # i.e. /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt
+  ckpt_path: null # i.e. /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt
   max_num_clicks: 5
   clicks_of_interest: [1, 2, 3, 4, 5] # another possibility [1, 3, 5, 10, 15, 20]
   iou_targets: [0.5, 0.65, 0.80, 0.85, 0.90]
@@ -30,20 +29,20 @@ trainer:
 data:
   ignore_label: 255
   datasets:
-    data_dir: /p/project/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing # /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti
+    data_dir: /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti # /p/project/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing
     sample_choice_train: full # full / subsampled / short
     sample_choice_validation: short # full / subsampled / short
     obj_type: all # things, stuff, all
-    add_distance: add_distance
+    add_distance: true
     sweep: 1
     segment_full_scene: true
-    instance_population: 0
+    instance_population: 20
     volume_augmentations_path: conf/augmentation/volumentations_aug.yaml
 
   dataloader:
     pin_memory: true
     num_workers: 4
-    batch_size: 1
+    batch_size: 4
     test_batch_size: 1
     voxel_size: 0.05
 
