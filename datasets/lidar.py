@@ -83,7 +83,8 @@ class LidarDataset(Dataset):
         if volume_augmentations_path is not None:
             self.volume_augmentations = V.load(volume_augmentations_path, data_format="yaml")
         if instance_population > 0:
-            self.instance_data = self._load_yaml(database_path / f"{mode}_instances_database.yaml")
+            # self.instance_data = self._load_yaml(database_path / f"{mode}_instances_database.yaml")
+            self.instance_data = self._load_yaml("/globalwork/fradlin/data/processed/semantic_kitti/trainval_instances_database.yaml")
 
     def chunks(self, lst, n):
         if "train" in self.mode or n == 1:
@@ -129,7 +130,7 @@ class LidarDataset(Dataset):
                 obj2label_maps_list.append({})
             else:
                 # Convert the panoptic labels into object labels
-                labels, obj2label_map, click_idx = self.generate_object_labels(scan)
+                labels, obj2label_map, click_idx, max_instance_id = self.generate_object_labels(scan)
                 labels_list.append(labels)
                 obj2label_maps_list.append(obj2label_map)
 
@@ -140,12 +141,11 @@ class LidarDataset(Dataset):
 
         # Populate the instances if required
         if "train" in self.mode and self.instance_population > 0:
-            max_instance_id = np.amax(labels[:, 1])
             pc_center = coordinates.mean(axis=0)
             instance_c, instance_f, instance_l = self.populate_instances(max_instance_id, pc_center, self.instance_population)
             coordinates = np.vstack((coordinates, instance_c))
             features = np.vstack((features, instance_f))
-            labels = np.vstack((labels, instance_l))
+            labels, obj2label_maps_list, click_idx = self.convert_instance_labels_to_obj_id(labels, instance_l, obj2label_maps_list, click_idx)
 
         # Enrich the features with the distance to the center
         if self.add_distance:
@@ -187,6 +187,7 @@ class LidarDataset(Dataset):
         # should use somewhere: self.ignore_label
 
         panoptic_labels = np.fromfile(scan["label_filepath"], dtype=np.uint32)
+        max_instance_id = np.amax(panoptic_labels >> 16)
         # Extract semantic labels
         semantic_labels = panoptic_labels & 0xFFFF
         updated_semantic_labels = np.vectorize(self.config["learning_map"].__getitem__)(semantic_labels)
@@ -231,7 +232,7 @@ class LidarDataset(Dataset):
         else:
             raise ValueError(f"{self.mode} should not be used generate_object_labels")
 
-        return obj_labels, obj2label_map, click_idx
+        return obj_labels, obj2label_map, click_idx, max_instance_id
 
     def select_only_desired_objects(self, obj_type, unique_panoptic_labels):
         things_targets = [1, 2, 3, 4, 5, 6, 7, 8]  # [1:car,  2:bicycle,  3:motorcycle,  4:truck,  5:other-vehicle,  6:person,  7:bicyclist,  8:motorcyclist ]
@@ -334,6 +335,34 @@ class LidarDataset(Dataset):
             features_list.append(features)
             labels_list.append(labels)
         return np.vstack(coordinates_list), np.vstack(features_list), np.vstack(labels_list)
+
+    def convert_instance_labels_to_obj_id(self, labels, instance_l, obj2label_maps_list, click_idx):
+        # Get unique rows from instance_l
+        unique_instance_l = np.unique(instance_l, axis=0)
+        new_instance2obj_id_map = {}
+        # Start object ID from the maximum label value plus one
+        cur_obj_id = labels.max() + 1
+        # Iterate over the unique label pairs
+        for unique_label_pair in unique_instance_l:
+            # Ensure both labels are uint32 and combine the labels into a single uint32 value
+            semantic_label = np.uint32(unique_label_pair[0])
+            instance_label = np.uint32(unique_label_pair[1])
+            combined_label = np.uint32((instance_label << 16) | semantic_label)
+            # Convert label_pair to a tuple to make it hashable
+            unique_label_pair = tuple(unique_label_pair)
+            # Map the unique label pair to a new object ID and update the obj2label for later statistics with the panoptic label (combined_label)
+            new_instance2obj_id_map[unique_label_pair] = cur_obj_id
+            obj2label_maps_list[0][str(int(cur_obj_id))] = int(combined_label)
+            click_idx[str(int(cur_obj_id))] = []
+            # Increment the current object
+            cur_obj_id += 1
+
+        new_instance_labels = np.zeros(instance_l.shape[0], dtype=np.uint32)
+        for i, (semantic_label, instance_label) in enumerate(instance_l):
+            new_instance_labels[i] = new_instance2obj_id_map[(semantic_label, instance_label)]
+
+        labels = np.hstack((labels, new_instance_labels))
+        return labels, obj2label_maps_list, click_idx
 
 
 def make_scan_transforms(split):

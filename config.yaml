@@ -4,9 +4,8 @@ general:
   seed: 42
   project_name: Mask4D-Interactive
   workspace: Ilyafr97
-  instance_population: 20
   dbscan_eps: null
-  experiment_name: now-batch_size_4_things_only # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
+  experiment_name: now-batch_size_4_things_augmentation # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
   save_dir: saved/${general.experiment_name}
   visualization_dir: saved/${general.experiment_name}/pointclouds
   # Frequently Adjusted Parameters
@@ -37,7 +36,7 @@ data:
     add_distance: true
     sweep: 1
     segment_full_scene: true
-    instance_population: 0
+    instance_population: 20
     volume_augmentations_path: conf/augmentation/volumentations_aug.yaml
 
   dataloader:

@@ -398,7 +398,7 @@ class ObjectSegmentation(pl.LightningModule):
             ignore_label=self.config.data.ignore_label,
             volume_augmentations_path=self.config.data.datasets.volume_augmentations_path,
             mode="train",
-            instance_population=0,  # self.config.data.instance_population
+            instance_population=self.config.data.datasets.instance_population,
         )
         self.validation_dataset = LidarDataset(
             data_dir=self.config.data.datasets.data_dir,
@@ -409,7 +409,7 @@ class ObjectSegmentation(pl.LightningModule):
             sample_choice=self.config.data.datasets.sample_choice_validation,
             ignore_label=self.config.data.ignore_label,
             mode="validation",
-            instance_population=0,  # self.config.data.instance_population
+            instance_population=0,  # self.config.data.datasets.instance_population
             volume_augmentations_path=None,
         )
         # self.test_dataset = hydra.utils.instantiate(self.config.data.test_dataset)
