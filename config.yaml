@@ -53,3 +53,4 @@ loss:
   aux: true
   bce_loss_coef: 1.0
   dice_loss_coef: 2.0
+  bbox_loss_coef: 2.0
