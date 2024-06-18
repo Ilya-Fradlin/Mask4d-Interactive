@@ -35,10 +35,9 @@ def get_parameters(cfg: DictConfig):
         os.environ["OMP_NUM_THREADS"] = "1"
         os.environ["MKL_NUM_THREADS"] = "1"
         # Add debugging options + No logging
-        cfg.data.voxel_size = 0.2
-        cfg.data.batch_size = 2
+        cfg.data.dataloader.voxel_size = 0.05
+        cfg.data.dataloader.batch_size = 1
         cfg.data.dataloader.num_workers = 1
-        cfg.data.dataloader.voxel_size = 0.2
         cfg.trainer.detect_anomaly = True
         cfg.trainer.num_sanity_val_steps = 0
         cfg.trainer.log_every_n_steps = 1

@@ -12,12 +12,14 @@ class VoxelizeCollate:
     ):
         self.voxel_size = voxel_size
         self.ignore_label = ignore_label
+        self.mode = mode
 
     def __call__(self, batch):
 
         (
             scene_names,
             coordinates,
+            full_coordinates,
             features,
             labels,
             original_labels,
@@ -27,10 +29,11 @@ class VoxelizeCollate:
             sequences,
             click_idxs,
             obj2labels,
-        ) = ([], [], [], [], [], [], [], [], [], [], [])
+        ) = ([], [], [], [], [], [], [], [], [], [], [], [])
 
         for sample in batch:
             scene_names.append(sample["sequence"])
+            full_coordinates.append(sample["features"][:, :3])
             click_idxs.append(sample["click_idx"])
             obj2labels.append(sample["obj2label"])
             original_labels.append(sample["labels"])
@@ -55,8 +58,10 @@ class VoxelizeCollate:
         raw_coordinates = features[:, :3]  # [original_x, original_y, original_z , time]
         features = features[:, 4:]  # [intensity, distance]
         collated_data = generate_collated_data(
+            mode=self.mode,
             scene_names=scene_names,
             coordinates=coordinates,
+            full_coordinates=full_coordinates,
             features=features,
             raw_coordinates=raw_coordinates,
             num_points=num_points,
@@ -97,50 +102,14 @@ def generate_target(features, labels, original_labels, ignore_label, inverse_map
 
     return target
 
-    # for feat, lb in zip(features, labels, original_labels):
-    # raw_coords = feat[:, :3]
-    # raw_coords = (raw_coords - raw_coords.min(0)[0]) / (raw_coords.max(0)[0] - raw_coords.min(0)[0])
-    # mask_labels = []
-    # binary_masks = []
-    # bboxs = []
-
-    # panoptic_labels = lb[:, 1].unique()
-    # for panoptic_label in panoptic_labels:
-    #     mask = lb[:, 1] == panoptic_label
-
-    #     if panoptic_label == 0:
-    #         continue
-
-    #     sem_labels = lb[mask, 0]
-    #     if sem_labels[0] != ignore_label:
-    #         mask_labels.append(sem_labels[0])
-    #         binary_masks.append(mask)
-    #         mask_coords = raw_coords[mask, :]
-    #         bboxs.append(
-    #             torch.hstack(
-    #                 (
-    #                     mask_coords.mean(0),
-    #                     mask_coords.max(0)[0] - mask_coords.min(0)[0],
-    #                 )
-    #             )
-    #         )
-
-    # if len(mask_labels) != 0:
-    #     mask_labels = torch.stack(mask_labels)
-    #     binary_masks = torch.stack(binary_masks)
-    #     bboxs = torch.stack(bboxs)
-    #     target.append(
-    #         {"labels": mask_labels, "original_labels": original_labels, "masks": binary_masks, "bboxs": bboxs}
-    #     )
-
-    # return target
-
 
 def generate_collated_data(
+    mode,
     scene_names,
     coordinates,
     features,
     raw_coordinates,
+    full_coordinates,
     num_points=None,
     sequences=None,
     click_idx=None,
@@ -153,6 +122,8 @@ def generate_collated_data(
     collated_data["num_points"] = num_points
     collated_data["sequences"] = sequences
     collated_data["click_idx"] = click_idx
+    if mode == "validation":
+        collated_data["full_coordinates"] = full_coordinates
 
     return collated_data
 

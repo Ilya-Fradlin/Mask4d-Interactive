@@ -106,6 +106,7 @@ class LidarDataset(Dataset):
         acc_num_points = [0]
         obj2label_maps_list = []
 
+        # for debugging can specify idx = 1397 (for scene 1397)
         for time, scan in enumerate(self.data[idx]):
             points = np.fromfile(scan["filepath"], dtype=np.float32).reshape(-1, 4)
             coordinates = points[:, :3]

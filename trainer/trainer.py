@@ -158,6 +158,7 @@ class ObjectSegmentation(pl.LightningModule):
         scene_names = data["scene_names"]
         coords = data["coordinates"]
         raw_coords = data["raw_coordinates"]
+        full_raw_coords = data["full_coordinates"]
         feats = data["features"]
         labels = target["labels"]
         labels_full = [torch.from_numpy(l).to(coords) for l in target["labels_full"]]
@@ -204,6 +205,7 @@ class ObjectSegmentation(pl.LightningModule):
                 )
                 pred_logits = outputs["pred_masks"]
                 pred = [p.argmax(-1) for p in pred_logits]
+                # pred = labels
 
             if current_num_clicks != 0:
                 click_weights = cal_click_loss_weights(batch_indicators, raw_coords, torch.cat(labels), click_idx)
@@ -267,6 +269,7 @@ class ObjectSegmentation(pl.LightningModule):
 
                 label_miou_dict = {"validation/" + k: v for k, v in label_miou_dict.items()}
                 self.log("validation/full_mIoU", sample_iou, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=True)
+                self.log("validation/quantized_mIoU", general_miou, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=True)
                 self.log_dict(label_miou_dict, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
                 self.validation_metric_logger.update(mIoU_quantized=general_miou)
                 self.validation_metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()), **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
@@ -279,10 +282,12 @@ class ObjectSegmentation(pl.LightningModule):
 
         pred = 0
 
-        if (batch_idx % self.config.general.visualization_frequency == 0) or (sample_iou < 0.4):  # Condition for visualization logging
+        if (batch_idx % self.config.general.visualization_frequency == 0) or (general_miou < 0.4):  # Condition for visualization logging
             # choose a random scene to visualize from the batch
             chosen_scene_idx = random.randint(0, batch_size - 1)
             scene_name = scene_names[chosen_scene_idx]
+            scene_name = scene_name.split("/")[-1].split(".")[0]
+            sample_raw_coords_full = full_raw_coords[chosen_scene_idx]
             sample_mask = batch_indicators == chosen_scene_idx
             sample_raw_coords = raw_coords[sample_mask]
             sample_pred = updated_pred[chosen_scene_idx]
@@ -290,14 +295,15 @@ class ObjectSegmentation(pl.LightningModule):
             sample_click_idx = click_idx[chosen_scene_idx]
 
             # general_miou, label_miou_dict, obj2label
-            gt_scene, pred_scene = generate_wandb_objects3d(sample_raw_coords, sample_labels, sample_pred, sample_click_idx, objects_info)
-            if batch_idx % self.config.general.visualization_frequency != 0:
-                wandb.log({f"point_scene/ground_truth_{scene_name}_{batch_idx}": gt_scene})
-                wandb.log({f"point_scene/prediction_{scene_name}_{batch_idx}_miou_{sample_iou}": pred_scene})
-            else:
+            # gt_scene, pred_scene = generate_wandb_objects3d(sample_raw_coords, sample_labels, sample_pred, sample_click_idx, objects_info)
+            gt_scene, gt_full_scene, pred_scene, pred_full_scene = generate_wandb_objects3d(sample_raw_coords, sample_raw_coords_full, sample_labels, sample_labels_full, sample_pred, sample_pred_full, sample_click_idx, objects_info)
+            if sample_iou < 0.4:
                 print("Logging visualization data for low mIoU scene")
-                wandb.log({f"point_scene_with_low_miou/ground_truth_{scene_name}_{batch_idx}": gt_scene})
-                wandb.log({f"point_scene_with_low_miou/prediction_{scene_name}_{batch_idx}_miou_{sample_iou}": pred_scene})
+            wandb.log({f"point_scene/ground_truth_ quantized_{scene_name}": gt_scene})
+            wandb.log({f"point_scene/ground_truth_full_{scene_name}": gt_full_scene})
+            wandb.log({f"point_scene/prediction_{scene_name}_full_sample_iou_{sample_iou:.2f}": pred_full_scene})
+            wandb.log({f"point_scene/prediction_{scene_name}_quantized_iou_{general_miou:.2f}": pred_scene})
+
         # self.config.general.visualization_dir,
         # self.validation_step_outputs.append(pred)
 
@@ -412,13 +418,13 @@ class ObjectSegmentation(pl.LightningModule):
         effective_batch_size = self.config.data.dataloader.batch_size * self.config.trainer.num_devices * self.config.trainer.num_nodes
         print(f"num devices (self.trainer.num_devices): {self.trainer.num_devices}")
         print(f"train_dataloader - batch_size: {self.config.data.dataloader.batch_size}, effective_batch_size: {effective_batch_size}, num_workers: {self.config.data.dataloader.num_workers}")
-        c_fn = VoxelizeCollate(mode="train", ignore_label=self.config.data.ignore_label, voxel_size=self.config.data.voxel_size)
+        c_fn = VoxelizeCollate(mode="train", ignore_label=self.config.data.ignore_label, voxel_size=self.config.data.dataloader.voxel_size)
         return DataLoader(self.train_dataset, shuffle=True, pin_memory=self.config.data.dataloader.pin_memory, num_workers=self.config.data.dataloader.num_workers, batch_size=self.config.data.dataloader.batch_size, collate_fn=c_fn)
 
     def val_dataloader(self):
         effective_batch_size = self.config.data.dataloader.test_batch_size * self.config.trainer.num_devices * self.config.trainer.num_nodes
         print(f"val_dataloader - batch_size: {self.config.data.dataloader.test_batch_size}, effective_batch_size: {effective_batch_size}, num_workers: {self.config.data.dataloader.num_workers}")
-        c_fn = VoxelizeCollate(mode="validation", ignore_label=self.config.data.ignore_label, voxel_size=self.config.data.voxel_size)
+        c_fn = VoxelizeCollate(mode="validation", ignore_label=self.config.data.ignore_label, voxel_size=self.config.data.dataloader.voxel_size)
         return DataLoader(self.validation_dataset, shuffle=False, pin_memory=self.config.data.dataloader.pin_memory, num_workers=self.config.data.dataloader.num_workers, batch_size=self.config.data.dataloader.test_batch_size, collate_fn=c_fn)
 
     def test_dataloader(self):

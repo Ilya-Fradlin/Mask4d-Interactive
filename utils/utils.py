@@ -71,9 +71,17 @@ def calculate_bounding_box_corners(min_x, max_x, min_y, max_y, min_z, max_z):
     return corners
 
 
-def generate_wandb_objects3d(raw_coords, labels, pred, click_idx, objects_info):
+def generate_wandb_objects3d(raw_coords, raw_coords_full, labels, labels_full, pred, sample_pred_full, click_idx, objects_info):
+    # Ensure inputs are PyTorch tensors
+    if not isinstance(raw_coords_full, torch.Tensor):
+        raw_coords_full = torch.tensor(raw_coords_full, device=raw_coords.device)
+    if not isinstance(labels_full, torch.Tensor):
+        labels_full = torch.tensor(labels_full, device=raw_coords.device)
+    if not isinstance(sample_pred_full, torch.Tensor):
+        sample_pred_full = torch.tensor(sample_pred_full, device=raw_coords.device)
+
     # Create a mapping from label to color
-    unique_labels = torch.unique(labels)
+    unique_labels = torch.unique(labels_full)
     num_labels = unique_labels.size(0)
     distinct_colors = generate_distinct_colors_kmeans(num_labels)
     label_to_color = {label.item(): distinct_colors[i] for i, label in enumerate(unique_labels)}
@@ -81,17 +89,25 @@ def generate_wandb_objects3d(raw_coords, labels, pred, click_idx, objects_info):
     # Add a new dimension to labels and pred
     labels = torch.unsqueeze(labels, dim=1)
     pred = torch.unsqueeze(pred, dim=1)
+    labels_full = torch.unsqueeze(labels_full, dim=1)
+    sample_pred_full = torch.unsqueeze(sample_pred_full, dim=1)
 
     # Prepare arrays to hold coordinates and corresponding colors
     pcd_gt = torch.cat((raw_coords, labels), dim=1).cpu().numpy()
+    pcd_gt_full = torch.cat((raw_coords_full, labels_full), dim=1).cpu().numpy()
     pcd_pred = torch.cat((raw_coords, pred), dim=1).cpu().numpy()
+    pcd_pred_full = torch.cat((raw_coords_full, sample_pred_full), dim=1).cpu().numpy()
 
     # Initialize arrays for points with RGB values
     pcd_gt_rgb = np.zeros((pcd_gt.shape[0], 6))
     pcd_pred_rgb = np.zeros((pcd_pred.shape[0], 6))
+    pcd_pred_full_rgb = np.zeros((pcd_pred_full.shape[0], 6))
+    pcd_gt_full_rgb = np.zeros((pcd_gt_full.shape[0], 6))
     # Fill the arrays with coordinates and RGB values
     pcd_gt_rgb[:, :3] = pcd_gt[:, :3]
     pcd_pred_rgb[:, :3] = pcd_pred[:, :3]
+    pcd_pred_full_rgb[:, :3] = pcd_pred_full[:, :3]
+    pcd_gt_full_rgb[:, :3] = pcd_gt_full[:, :3]
     for i in range(pcd_gt.shape[0]):
         label = int(pcd_gt[i, 3])
         color = label_to_color[label]
@@ -100,6 +116,14 @@ def generate_wandb_objects3d(raw_coords, labels, pred, click_idx, objects_info):
         label = int(pcd_pred[i, 3])
         color = label_to_color[label]
         pcd_pred_rgb[i, 3:] = color
+    for i in range(pcd_gt_full.shape[0]):
+        label = int(pcd_gt_full[i, 3])
+        color = label_to_color[label]
+        pcd_gt_full_rgb[i, 3:] = color
+    for i in range(pcd_pred_full.shape[0]):
+        label = int(pcd_pred_full[i, 3])
+        color = label_to_color[label]
+        pcd_pred_full_rgb[i, 3:] = color
 
     ####################################################################################
     ############### Get the Predicted and clicks as small Bounding Boxes ###############
@@ -124,15 +148,17 @@ def generate_wandb_objects3d(raw_coords, labels, pred, click_idx, objects_info):
 
             current_box_click = {
                 "corners": calculate_bounding_box_corners(min_x, max_x, min_y, max_y, min_z, max_z),
-                "label": f"obj{obj}-{obj_class}-iou_{obj_iou:.02f}-click_{i}/{max_clicks_for_obj}",
+                "label": f"{obj}-{i+1}/{max_clicks_for_obj}-{obj_class}-{obj_iou:.02f}",
                 "color": [255, 0, 255],
             }
             boxes_array.append(current_box_click)
 
     gt_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_gt_rgb})
     pred_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_pred_rgb, "boxes": np.array(boxes_array)})
+    gt_full_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_gt_full_rgb})
+    pred_full_scene = wandb.Object3D({"type": "lidar/beta", "points": pcd_pred_full_rgb})
 
-    return gt_scene, pred_scene
+    return gt_scene, gt_full_scene, pred_scene, pred_full_scene
 
 
 def generate_distinct_colors_kmeans(n):
