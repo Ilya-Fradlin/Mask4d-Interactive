@@ -108,6 +108,7 @@ class LidarDataset(Dataset):
         obj2label_maps_list = []
 
         # for debugging can specify idx = 1397 (for scene 1397)
+        label2obj_map, obj2label_map, click_idx, max_instance_id = {}, {}, {}, 0
         for time, scan in enumerate(self.data[idx]):
             points = np.fromfile(scan["filepath"], dtype=np.float32).reshape(-1, 4)
             coordinates = points[:, :3]
@@ -130,7 +131,7 @@ class LidarDataset(Dataset):
                 obj2label_maps_list.append({})
             else:
                 # Convert the panoptic labels into object labels
-                labels, obj2label_map, click_idx, max_instance_id = self.generate_object_labels(scan)
+                labels, obj2label_map, click_idx, max_instance_id, label2obj_map = self.generate_object_labels(scan, max_instance_id, label2obj_map, obj2label_map, click_idx)
                 labels_list.append(labels)
                 obj2label_maps_list.append(obj2label_map)
 
@@ -183,11 +184,13 @@ class LidarDataset(Dataset):
             "obj2label": obj2label_maps_list,
         }
 
-    def generate_object_labels(self, scan):
+    def generate_object_labels(self, scan, max_instance_id, label2obj_map, obj2label_map, click_idx):
         # should use somewhere: self.ignore_label
 
         panoptic_labels = np.fromfile(scan["label_filepath"], dtype=np.uint32)
-        max_instance_id = np.amax(panoptic_labels >> 16)
+        current_max_instance_id = np.amax(panoptic_labels >> 16)
+        if current_max_instance_id > max_instance_id:
+            max_instance_id = current_max_instance_id
         # Extract semantic labels
         semantic_labels = panoptic_labels & 0xFFFF
         updated_semantic_labels = np.vectorize(self.config["learning_map"].__getitem__)(semantic_labels)
@@ -195,9 +198,8 @@ class LidarDataset(Dataset):
         panoptic_labels &= np.array(~0xFFFF).astype(np.uint32)  # Clear lower 16 bits
         panoptic_labels |= updated_semantic_labels.astype(np.uint32)  # Set lower 16 bits with updated semantic labels
 
-        obj2label_map = {}
-        click_idx = {}
         if "validation" in self.mode and not self.segment_full_scene:
+            # TODO: Hanfle the case when sweep > 1
             if self.obj_type != "all":
                 # we need to keep only the things or only the stuff
                 scan["clicks"], scan["obj"] = self.select_only_desired_objects_subsampled(self.obj_type, scan["obj"], scan["clicks"])
@@ -221,18 +223,35 @@ class LidarDataset(Dataset):
                 num_obj = np.random.randint(1, min(10, max_num_obj) + 1)
             chosen_objects = random_sample(unique_panoptic_labels, num_obj)
 
-            for obj_idx, label in enumerate(chosen_objects):
-                obj_idx += 1  # 0 is background
-                obj_labels[panoptic_labels == label] = int(obj_idx)
-                obj2label_map[str(int(obj_idx))] = int(label)
-                click_idx[str(obj_idx)] = []
-            # Background
-            click_idx["0"] = []
+            if label2obj_map == {}:
+                # This is the first scene we are generating object labels
+                for obj_idx, label in enumerate(chosen_objects):
+                    obj_idx += 1  # 0 is background
+                    obj_labels[panoptic_labels == label] = int(obj_idx)
+                    obj2label_map[str(int(obj_idx))] = int(label)
+                    label2obj_map[label] = int(obj_idx)
+                    click_idx[str(obj_idx)] = []
+                # Background
+                click_idx["0"] = []
+            else:
+                # We have already generated object labels for previous scene in the sweep, now need to update for new object
+                current_obj_idx = max(label2obj_map.values()) + 1  # In case there are new objects in the scene, add them as the following index
+                for label in chosen_objects:
+                    if label in label2obj_map.keys():
+                        defined_obj_id = label2obj_map[label]
+                        obj_labels[panoptic_labels == label] = int(defined_obj_id)
+                    else:
+                        # a new obj is introduced
+                        obj2label_map[str(int(current_obj_idx))] = int(label)
+                        label2obj_map[label] = int(current_obj_idx)
+                        obj_labels[panoptic_labels == label] = int(current_obj_idx)
+                        click_idx[str(current_obj_idx)] = []
+                        current_obj_idx += 1
 
         else:
             raise ValueError(f"{self.mode} should not be used generate_object_labels")
 
-        return obj_labels, obj2label_map, click_idx, max_instance_id
+        return obj_labels, obj2label_map, click_idx, max_instance_id, label2obj_map
 
     def select_only_desired_objects(self, obj_type, unique_panoptic_labels):
         things_targets = [1, 2, 3, 4, 5, 6, 7, 8]  # [1:car,  2:bicycle,  3:motorcycle,  4:truck,  5:other-vehicle,  6:person,  7:bicyclist,  8:motorcyclist ]
