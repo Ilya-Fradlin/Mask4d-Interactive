@@ -35,7 +35,7 @@ def get_parameters(cfg: DictConfig):
         os.environ["OMP_NUM_THREADS"] = "1"
         os.environ["MKL_NUM_THREADS"] = "1"
         # Add debugging options + No logging
-        cfg.data.dataloader.voxel_size = 0.05
+        cfg.data.dataloader.voxel_size = 0.2
         cfg.data.dataloader.batch_size = 1
         cfg.data.dataloader.num_workers = 1
         cfg.trainer.detect_anomaly = True
@@ -98,7 +98,7 @@ def train(cfg: DictConfig):
             mode="max",
             dirpath=cfg.general.save_dir,
             every_n_epochs=1,
-            filename="{epoch=02d}-{mIoU_epoch=.3f}",
+            filename="{epoch:02d}-{mIoU_epoch:.3f}",
             save_on_train_epoch_end=True,
         )
     )

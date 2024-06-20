@@ -5,6 +5,7 @@
 import torch
 import numpy as np
 import random
+from scipy.spatial import ConvexHull
 
 
 def mean_iou_single(pred, labels):
@@ -250,7 +251,7 @@ def get_next_simulated_click_multi(error_cluster_ids, error_cluster_ids_mask, pr
         pair_distances = error_distances[cluster_id]
 
         # get next click candidate
-        center_id, center_coo, center_gt, max_dist, candidates = get_next_click_random(coords_qv, error, labels_qv, pred_qv, pair_distances)
+        center_id, center_coo, center_gt, max_dist, candidates = get_next_click_coo_torch(coords_qv, error, labels_qv, pred_qv, pair_distances)
 
         if click_dict.get(str(int(center_gt))) == None:
             click_dict[str(int(center_gt))] = [int(center_id)]
@@ -292,19 +293,20 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
     labels_qv = labels_qv.float()
     pred_label = pred_qv.float()
 
-    # Do not generate new clicks for obj that has been clicked more than the threshold
-    if current_click_idx is not None:
-        for obj_id, click_ids in current_click_idx.items():
-            if len(click_ids) >= 10:  # TODO: inject this as a click_threshold parameter
-                # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
-                pred_label[labels_qv == int(obj_id)] = int(obj_id)
+    # # Do not generate new clicks for obj that has been clicked more than the threshold
+    # if current_click_idx is not None:
+    #     for obj_id, click_ids in current_click_idx.items():
+    #         if obj_id != "0":  # background can receive as many clicks as needed
+    #             if len(click_ids) >= 20:  # TODO: inject this as a click_threshold parameter
+    #                 # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
+    #                 pred_label[labels_qv == int(obj_id)] = int(obj_id)
 
     error_mask = torch.abs(pred_label - labels_qv) > 0
 
     if error_mask.sum() == 0:
         return None, None, None, None
 
-    cluster_ids = labels_qv * 96 + pred_label * 11
+    cluster_ids = labels_qv * 9973 + pred_label * 11
 
     # error_region = coords_qv[error_mask]
 
@@ -320,14 +322,28 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
     ### measure the size of each error cluster and store the distance
     error_sizes = {}
     error_distances = {}
+    center_ids, center_coos, center_gts = {}, {}, {}
 
     for cluster_id in error_cluster_ids:
         error = error_cluster_ids_mask == cluster_id
-        pairwise_distances = measure_error_size(coords_qv, error)
 
-        error_distances[int(cluster_id)] = pairwise_distances
-        #  TODO: why do we take the max error_distance instead of the sum?
-        error_sizes[int(cluster_id)] = torch.max(pairwise_distances).tolist()
+        #### Original implementation
+        # pairwise_distances = measure_error_size(coords_qv, error)
+        # error_distances[int(cluster_id)] = pairwise_distances
+        # error_sizes[int(cluster_id)] = torch.max(pairwise_distances).tolist()
+
+        #### Compute the AABB (Axis-Aligned Bounding Box) for the wrongly classified points
+        clusters_error_distance, furthest_point, furthest_point_index = find_closest_point_to_centroid(coords_qv, error)
+        original_indices = torch.nonzero(error).squeeze()  # Find the index of the furthest point in the original coords_qv
+        if original_indices.dim() == 0:  # There is only one point in the error region
+            furthest_point_original_index = original_indices.item()
+        else:
+            furthest_point_original_index = original_indices[furthest_point_index]
+        error_sizes[int(cluster_id)], center_ids[int(cluster_id)], center_coos[int(cluster_id)], center_gts[int(cluster_id)] = clusters_error_distance, furthest_point_original_index, furthest_point, labels_qv[furthest_point_original_index]
+
+        #### Compute the OBB (Oriented bounding box) for the wrongly classified points
+        # error_points = coords_qv[error]
+        # furthest_point = find_furthest_point_hull(error_points)
 
     error_cluster_ids_sorted = sorted(error_sizes, key=error_sizes.get, reverse=True)
 
@@ -342,8 +358,8 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
         else:
             selected_error_cluster_ids = error_cluster_ids_sorted[:1]
 
-    new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi(selected_error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances)
-
+    # new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi(selected_error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances)
+    new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi_bbox(selected_error_cluster_ids, error_cluster_ids_mask, center_ids, center_coos, center_gts)
     return new_clicks, new_click_num, new_click_pos, new_click_time
 
 
@@ -357,3 +373,95 @@ def extend_clicks(current_clicks, current_clicks_time, new_clicks, new_click_tim
         current_clicks_time[obj_id].extend([t + current_click_num for t in new_click_time[obj_id]])
 
     return current_clicks, current_clicks_time
+
+
+def find_furthest_point_hull(error_points):
+    # Compute the convex hull
+    error_points = error_points.cpu().numpy()
+    hull = ConvexHull(error_points)
+
+    # Calculate distances from each point to each hull face
+    max_min_dist = 0
+    furthest_point = None
+
+    for point in error_points:
+        min_dist_to_hull = np.inf
+        for simplex in hull.simplices:
+            # Get the vertices of this face
+            vertices = error_points[simplex]
+            # Create a plane equation from the vertices
+            v0, v1, v2 = vertices
+            normal = np.cross(v1 - v0, v2 - v0)
+            normal /= np.linalg.norm(normal)  # Normalize the normal vector
+            d = -np.dot(normal, v0)  # Plane equation: ax + by + cz + d = 0
+            # Distance from point to this plane
+            distance = abs(np.dot(normal, point) + d) / np.linalg.norm(normal)
+            # Update the minimum distance for this point
+            if distance < min_dist_to_hull:
+                min_dist_to_hull = distance
+        # Update the global maximum of minimum distances
+        if min_dist_to_hull > max_min_dist:
+            max_min_dist = min_dist_to_hull
+            furthest_point = point
+
+    return furthest_point
+
+
+def find_furthest_point_bbox(coords, error):
+    # AABB: Axis-Aligned Bounding Box
+    wrong_points = coords[error]
+    # Compute the AABB for the wrongly classified points
+    min_coords = torch.min(wrong_points, dim=0).values
+    max_coords = torch.max(wrong_points, dim=0).values
+    # Compute the distance of each point from the nearest border of the AABB
+    distances = torch.min(wrong_points - min_coords, max_coords - wrong_points)
+    min_distances = torch.min(distances, dim=1).values
+    # Find the point furthest away from any of the borders
+    furthest_point_index = torch.argmax(min_distances)
+    distance = torch.max(min_distances)
+    furthest_point = wrong_points[furthest_point_index]
+
+    return distance, furthest_point, furthest_point_index
+
+
+def find_closest_point_to_centroid(coords, error):
+    # Extract the coordinates of the wrongly classified points
+    wrong_points = coords[error]
+    # Compute the centroid of the wrongly classified points
+    centroid = torch.mean(wrong_points, dim=0)
+    # Compute the Euclidean distance of each point from the centroid
+    distances = torch.norm(wrong_points - centroid, dim=1)
+    # Find the point closest to the centroid
+    closest_point_index = torch.argmin(distances)
+    distance = torch.min(distances)
+    closest_point = wrong_points[closest_point_index]
+
+    return distance, closest_point, closest_point_index
+
+
+def get_next_simulated_click_multi_bbox(error_cluster_ids, error_cluster_ids_mask, center_ids, center_coos, center_gts):
+    """Sample the next clicks for each error region"""
+
+    click_dict = {}
+    new_click_pos = {}
+    click_time_dict = {}
+    click_order = 0
+
+    random.shuffle(error_cluster_ids)
+
+    for cluster_id in error_cluster_ids:
+        center_id, center_coo, center_gt = center_ids[int(cluster_id)], center_coos[int(cluster_id)], center_gts[int(cluster_id)]
+        if click_dict.get(str(int(center_gt))) == None:
+            click_dict[str(int(center_gt))] = [int(center_id)]
+            new_click_pos[str(int(center_gt))] = [center_coo]
+            click_time_dict[str(int(center_gt))] = [click_order]
+        else:
+            click_dict[str(int(center_gt))].append(int(center_id))
+            new_click_pos[str(int(center_gt))].append(center_coo)
+            click_time_dict[str(int(center_gt))].append(click_order)
+
+        click_order += 1
+
+    click_num = len(error_cluster_ids)
+
+    return click_dict, click_num, new_click_pos, click_time_dict
