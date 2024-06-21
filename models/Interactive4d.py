@@ -66,6 +66,9 @@ class Interactive4D(nn.Module):
 
         self.masked_transformer_decoder = nn.ModuleList()
 
+        # Projection of backbone features into the mask dimension
+        self.lin_squeeze = nn.ModuleList()
+
         # Click-to-scene attention
         self.c2s_attention = nn.ModuleList()
 
@@ -80,14 +83,13 @@ class Interactive4D(nn.Module):
 
         num_uniq_decoders = self.num_decoders if not self.shared_decoder else 1
 
-        for _ in range(num_uniq_decoders):
+        for hlevel in range(num_uniq_decoders):
             tmp_c2s_attention = nn.ModuleList()
             tmp_s2c_attention = nn.ModuleList()
             tmp_c2c_attention = nn.ModuleList()
             tmp_ffn_attention = nn.ModuleList()
 
-            for i, hlevel in enumerate(range(self.num_levels)):
-                # TODO: adjust the number of levels  (1->4?)
+            for i, _ in enumerate(range(1)):  # TODO: adjust the number of levels  (1->4?)
                 tmp_c2s_attention.append(
                     CrossAttentionLayer(
                         d_model=self.mask_dim,
@@ -124,6 +126,7 @@ class Interactive4D(nn.Module):
                     )
                 )
 
+            self.lin_squeeze.append(nn.Linear(sizes[hlevel], self.mask_dim))
             self.c2s_attention.append(tmp_c2s_attention)
             self.s2c_attention.append(tmp_s2c_attention)
             self.c2c_attention.append(tmp_c2c_attention)
@@ -225,73 +228,73 @@ class Interactive4D(nn.Module):
 
             refine_time = 0
 
-            for decoder_counter in range(self.num_decoders):
-                if self.shared_decoder:
-                    decoder_counter = 0
-                for i, hlevel in enumerate([self.num_levels]):
-                    # TODO sort out the num_levels / hlevel scenario
-                    hlevel = 4
-                    pos_enc = pos_encodings_pcd[hlevel][0][b]  # [num_points, 128]
+            for hlevel in range(self.num_levels):
+                pos_enc = pos_encodings_pcd[-1][0][b]  # [num_points, 128]
+                aux_pos_enc = pos_encodings_pcd[hlevel][0][b]  # [num_points, 128]
 
-                    if refine_time == 0:
-                        attn_mask = None
+                if refine_time == 0:
+                    attn_mask = None
 
-                    output = self.c2s_attention[decoder_counter][i](
-                        torch.cat([fg_queries, bg_queries], dim=0),  # [num_queries, 128]
-                        src_pcd,  # [num_points, 128]
-                        memory_mask=attn_mask,
-                        memory_key_padding_mask=None,
-                        pos=pos_enc,  # [num_points, 128]
-                        query_pos=torch.cat([fg_query_pos, bg_query_pos], dim=0),  # [num_queries, 128]
-                    )  # [num_queries, 128]
+                # auxilary_backbone_output = self.lin_squeeze[hlevel](batched_feat.permute((1, 0, 2)))
+                aux_output_projected = self.lin_squeeze[hlevel](aux[hlevel].decomposed_features[b])
 
-                    output = self.c2c_attention[decoder_counter][i](
-                        output,  # [num_queries, 128]
-                        tgt_mask=None,
-                        tgt_key_padding_mask=None,
-                        query_pos=torch.cat([fg_query_pos, bg_query_pos], dim=0),  # [num_queries, 128]
-                    )  # [num_queries, 128]
+                output = self.c2s_attention[hlevel][0](
+                    torch.cat([fg_queries, bg_queries], dim=0),  # [num_queries, 128]
+                    aux_output_projected,  # [num_points, 128]
+                    # memory_mask=attn_mask,
+                    memory_mask=None,
+                    memory_key_padding_mask=None,
+                    pos=aux_pos_enc,  # [num_points, 128]
+                    query_pos=torch.cat([fg_query_pos, bg_query_pos], dim=0),  # [num_queries, 128]
+                )  # [num_queries, 128]
 
-                    # FFN
-                    queries = self.ffn_attention[decoder_counter][i](output)  # [num_queries, 128]
+                output = self.c2c_attention[hlevel][0](
+                    output,  # [num_queries, 128]
+                    tgt_mask=None,
+                    tgt_key_padding_mask=None,
+                    query_pos=torch.cat([fg_query_pos, bg_query_pos], dim=0),  # [num_queries, 128]
+                )  # [num_queries, 128]
 
-                    src_pcd = self.s2c_attention[decoder_counter][i](
-                        src_pcd,
-                        queries,  # [num_queries, 128]
-                        memory_mask=None,
-                        memory_key_padding_mask=None,
-                        pos=torch.cat([fg_query_pos, bg_query_pos], dim=0),  # [num_queries, 128]
-                        query_pos=pos_enc,  # [num_points, 128]
-                    )  # [num_points, 128]
+                # FFN
+                queries = self.ffn_attention[hlevel][0](output)  # [num_queries, 128]
 
-                    fg_queries, bg_queries = queries.split([fg_query_num, bg_query_num], 0)
+                src_pcd = self.s2c_attention[hlevel][0](
+                    src_pcd,
+                    queries,  # [num_queries, 128]
+                    memory_mask=None,
+                    memory_key_padding_mask=None,
+                    pos=torch.cat([fg_query_pos, bg_query_pos], dim=0),  # [num_queries, 128]
+                    query_pos=pos_enc,  # [num_points, 128]
+                )  # [num_points, 128]
 
-                    outputs_mask, attn_mask = self.mask_module(fg_queries, bg_queries, src_pcd, ret_attn_mask=True, fg_query_num_split=fg_query_num_split)
-                    predictions_mask[b].append(outputs_mask)
+                fg_queries, bg_queries = queries.split([fg_query_num, bg_query_num], 0)
 
-                    # generate the bboxs
-                    pred = outputs_mask.argmax(-1)
-                    scene_len = outputs_mask.shape[0]
-                    scene_raw_coords = coordinates.features[previous_scene_end_idx : previous_scene_end_idx + scene_len]
-                    scene_raw_coords = (scene_raw_coords - scene_raw_coords.min(0)[0]) / (scene_raw_coords.max(0)[0] - scene_raw_coords.min(0)[0])
+                outputs_mask, attn_mask = self.mask_module(fg_queries, bg_queries, src_pcd, ret_attn_mask=True, fg_query_num_split=fg_query_num_split)
+                predictions_mask[b].append(outputs_mask)
 
-                    bboxs_output = {}
-                    for obj in click_idx[b].keys():
-                        obj = int(obj)
-                        if obj == 0:
-                            continue
-                        mask = pred == obj
-                        mask_coords = scene_raw_coords[mask, :]
-                        if len(mask_coords) == 0:
-                            obj_bbox = torch.tensor((0, 0, 0, 0, 0, 0))
-                        else:
-                            obj_bbox = torch.hstack((mask_coords.mean(0), mask_coords.max(0)[0] - mask_coords.min(0)[0]))
-                        bboxs_output[obj] = obj_bbox
+                # generate the bboxs
+                pred = outputs_mask.argmax(-1)
+                scene_len = outputs_mask.shape[0]
+                scene_raw_coords = coordinates.features[previous_scene_end_idx : previous_scene_end_idx + scene_len]
+                scene_raw_coords = (scene_raw_coords - scene_raw_coords.min(0)[0]) / (scene_raw_coords.max(0)[0] - scene_raw_coords.min(0)[0])
 
-                    predictions_bbox[b].append(bboxs_output)
+                bboxs_output = {}
+                for obj in click_idx[b].keys():
+                    obj = int(obj)
+                    if obj == 0:
+                        continue
+                    mask = pred == obj
+                    mask_coords = scene_raw_coords[mask, :]
+                    if len(mask_coords) == 0:
+                        obj_bbox = torch.tensor((0, 0, 0, 0, 0, 0))
+                    else:
+                        obj_bbox = torch.hstack((mask_coords.mean(0), mask_coords.max(0)[0] - mask_coords.min(0)[0]))
+                    bboxs_output[obj] = obj_bbox
 
-                    refine_time += 1
-            previous_scene_end_idx = previous_scene_end_idx + scene_len
+                predictions_bbox[b].append(bboxs_output)
+
+                refine_time += 1
+        previous_scene_end_idx = previous_scene_end_idx + scene_len
 
         predictions_mask = [list(i) for i in zip(*predictions_mask)]
         predictions_bbox = [list(i) for i in zip(*predictions_bbox)]

@@ -27,7 +27,7 @@ class ObjectSegmentation(pl.LightningModule):
         super().__init__()
         self.config = config
         # model
-        self.interactive4d = Interactive4D(num_heads=8, num_decoders=3, num_levels=1, hidden_dim=128, dim_feedforward=1024, shared_decoder=False, num_bg_queries=10, dropout=0.0, pre_norm=False, aux=True, voxel_size=config.data.voxel_size, sample_sizes=[4000, 8000, 16000, 32000])
+        self.interactive4d = Interactive4D(num_heads=8, num_decoders=5, num_levels=5, hidden_dim=128, dim_feedforward=1024, shared_decoder=False, num_bg_queries=10, dropout=0.0, pre_norm=False, aux=True, voxel_size=config.data.voxel_size, sample_sizes=[4000, 8000, 16000, 32000])
         self.optional_freeze = nullcontext
 
         weight_dict = {
@@ -40,7 +40,7 @@ class ObjectSegmentation(pl.LightningModule):
         # TODO: check this aux loss
         if config.loss.aux:
             aux_weight_dict = {}
-            for i in range(self.interactive4d.num_decoders * self.interactive4d.num_levels):
+            for i in range(self.interactive4d.num_decoders):
                 aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
             weight_dict.update(aux_weight_dict)
         self.criterion = SetCriterion(losses=["bce", "dice", "bbox"], weight_dict=weight_dict)
