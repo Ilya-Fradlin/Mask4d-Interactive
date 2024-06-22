@@ -525,3 +525,14 @@ class ObjectSegmentation(pl.LightningModule):
                 bboxs_target[i] = {key_mapping[old_key]: value for old_key, value in bboxs_target[i].items()}
 
         return click_idx, obj2label, labels, bboxs_target
+
+
+class CustomAdamW(AdamW):
+    def step(self, closure=None):
+        for group in self.param_groups:
+            for p in group["params"]:
+                state = self.state[p]
+                # Ensure state steps are on the CPU
+                if "step" in state and state["step"].is_cuda:
+                    state["step"] = state["step"].cpu()
+        super().step(closure)
