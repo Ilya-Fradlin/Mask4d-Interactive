@@ -137,6 +137,28 @@ def mean_iou_validation(pred, labels, obj2label):
     return iou_batch, average_iou_per_label, objects_info
 
 
+def get_objects_iou(pred, labels):
+    """Calculate the mean IoU for a batch"""
+    assert len(pred) == len(labels)
+    bs = len(pred)
+    objects_info = []  # Initialize IoU for the entire batch
+
+    for b in range(bs):
+        objects_info.append({})
+        pred_sample = pred[b]
+        labels_sample = labels[b]
+        obj_ids = torch.unique(labels_sample)
+        # obj_ids = obj_ids[obj_ids != 0]
+        # obj_num = len(obj_ids)
+        iou_sample = 0.0
+        for obj_id in obj_ids:
+            obj_iou = mean_iou_single(pred_sample == obj_id, labels_sample == obj_id)
+            objects_info[b][int(obj_id)] = obj_iou.item()
+            iou_sample += obj_iou
+
+    return objects_info
+
+
 def mean_iou_scene(pred, labels):
     """Calculate the mean IoU for all target objects in the scene"""
     obj_ids = torch.unique(labels)
@@ -363,6 +385,86 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
     return new_clicks, new_click_num, new_click_pos, new_click_time
 
 
+def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None, current_click_idx=None, training=True, objects_info={}):
+    labels_qv = labels_qv.float()
+    pred_label = pred_qv.float()
+
+    # Do not generate new clicks for obj that has been clicked more than the threshold
+    # if current_click_idx is not None:
+    #     for obj_id, click_ids in current_click_idx.items():
+    #         if obj_id != "0":  # background can receive as many clicks as needed
+    #             if len(click_ids) >= 20:  # TODO: inject this as a click_threshold parameter
+    #                 # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
+    #                 pred_label[labels_qv == int(obj_id)] = int(obj_id)
+
+    error_mask = torch.abs(pred_label - labels_qv) > 0
+
+    if error_mask.sum() == 0:
+        return None, None, None, None
+
+    cluster_ids = labels_qv * 9973 + pred_label * 11
+    # cluster_ids = labels_qv
+
+    # error_region = coords_qv[error_mask]
+
+    num_obj = (torch.unique(labels_qv) != 0).sum()
+
+    error_clusters = cluster_ids[error_mask]
+    error_cluster_ids = torch.unique(error_clusters)
+    num_error_cluster = len(error_cluster_ids)
+
+    error_cluster_ids_mask = torch.ones(coords_qv.shape[0], device=error_mask.device) * -1
+    error_cluster_ids_mask[error_mask] = error_clusters
+
+    ### measure the size of each error cluster and store the distance
+    error_sizes = {}
+    error_distances = {}
+    center_ids, center_coos, center_gts = {}, {}, {}
+
+    for cluster_id in error_cluster_ids:
+        error = error_cluster_ids_mask == cluster_id
+
+        #### Original implementation
+        # pairwise_distances = measure_error_size(coords_qv, error)
+        # error_distances[int(cluster_id)] = pairwise_distances
+        # error_sizes[int(cluster_id)] = torch.max(pairwise_distances).tolist()
+
+        #### Compute the AABB (Axis-Aligned Bounding Box) for the wrongly classified points
+        clusters_error_distance, furthest_point, furthest_point_index = find_closest_point_to_centroid(coords_qv, error)
+        original_indices = torch.nonzero(error).squeeze()  # Find the index of the furthest point in the original coords_qv
+        if original_indices.dim() == 0:  # There is only one point in the error region
+            furthest_point_original_index = original_indices.item()
+        else:
+            furthest_point_original_index = original_indices[furthest_point_index]
+        center_ids[int(cluster_id)], center_coos[int(cluster_id)], center_gts[int(cluster_id)] = furthest_point_original_index, furthest_point, labels_qv[furthest_point_original_index]
+
+        correct_label, _ = decode_cluster_ids(cluster_id)
+        error_region_percetage = torch.sum(error) / (labels_qv == correct_label).count_nonzero()
+        # error_sizes[int(cluster_id)] = error_point_portion / objects_info[int(correct_label)]  # Divide by iou
+        error_sizes[int(cluster_id)] = error_region_percetage * (1 - objects_info[int(correct_label)])
+
+        #### Compute the OBB (Oriented bounding box) for the wrongly classified points
+        # error_points = coords_qv[error]
+        # furthest_point = find_furthest_point_hull(error_points)
+
+    error_cluster_ids_sorted = sorted(error_sizes, key=error_sizes.get, reverse=True)
+
+    if training:
+        if num_error_cluster >= num_obj:
+            selected_error_cluster_ids = error_cluster_ids_sorted[:num_obj]
+        else:
+            selected_error_cluster_ids = error_cluster_ids_sorted
+    else:
+        if current_num_clicks == 0:
+            selected_error_cluster_ids = error_cluster_ids_sorted
+        else:
+            selected_error_cluster_ids = error_cluster_ids_sorted[:1]
+
+    # new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi(selected_error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances)
+    new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi_bbox(selected_error_cluster_ids, error_cluster_ids_mask, center_ids, center_coos, center_gts)
+    return new_clicks, new_click_num, new_click_pos, new_click_time
+
+
 def extend_clicks(current_clicks, current_clicks_time, new_clicks, new_click_time):
     """Append new click to existing clicks"""
 
@@ -465,3 +567,13 @@ def get_next_simulated_click_multi_bbox(error_cluster_ids, error_cluster_ids_mas
     click_num = len(error_cluster_ids)
 
     return click_dict, click_num, new_click_pos, click_time_dict
+
+
+def decode_cluster_ids(cluster_ids, prime1=9973, prime2=11):
+    # Recover pred_label using modular arithmetic
+    pred_label = (cluster_ids % prime1) // prime2
+
+    # Recover labels_qv by isolating it
+    labels_qv = (cluster_ids - pred_label * prime2) // prime1
+
+    return labels_qv, pred_label

@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 import utils.misc as utils
 from utils.utils import generate_wandb_objects3d
-from utils.seg import mean_iou, mean_iou_validation, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks
+from utils.seg import mean_iou, mean_iou_validation, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks, get_iou_based_simulated_clicks, get_objects_iou
 from datasets.utils import VoxelizeCollate
 from datasets.lidar import LidarDataset
 from models import Interactive4D
@@ -251,11 +251,16 @@ class ObjectSegmentation(pl.LightningModule):
                         if next_iou_target_indices[idx] == len(iou_targets) - 1:
                             break
 
-                new_clicks, new_clicks_num, new_click_pos, new_click_time = get_simulated_clicks(
+                if updated_pred == []:
+                    objects_info = get_objects_iou(pred, labels)
+                else:
+                    objects_info = get_objects_iou(updated_pred, labels)
+                new_clicks, new_clicks_num, new_click_pos, new_click_time = get_iou_based_simulated_clicks(
                     sample_pred,
                     sample_labels,
                     sample_raw_coords,
                     current_num_clicks,
+                    objects_info=objects_info[idx],
                     current_click_idx=click_idx[idx],
                     training=False,
                 )
@@ -480,11 +485,14 @@ class ObjectSegmentation(pl.LightningModule):
                     sample_labels = labels[idx]
                     sample_raw_coords = raw_coords[sample_mask]
 
-                    new_clicks, new_clicks_num, new_click_pos, new_click_time = get_simulated_clicks(
+                    objects_info = get_objects_iou(pred, labels)
+
+                    new_clicks, new_clicks_num, new_click_pos, new_click_time = get_iou_based_simulated_clicks(
                         sample_pred,
                         sample_labels,
                         sample_raw_coords,
                         current_num_iter,
+                        objects_info=objects_info[idx],
                         current_click_idx=click_idx[idx],
                         training=True,
                     )
