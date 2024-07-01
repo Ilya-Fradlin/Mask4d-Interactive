@@ -17,6 +17,7 @@ from utils.utils import generate_wandb_objects3d
 from utils.seg import mean_iou, mean_iou_validation, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks, get_iou_based_simulated_clicks, get_objects_iou
 from datasets.utils import VoxelizeCollate
 from datasets.lidar import LidarDataset
+from datasets.lidar_nuscenes import LidarDatasetNuscenes
 from models import Interactive4D
 from models.criterion import SetCriterion
 from models.metrics.utils import IoU_at_numClicks, NumClicks_for_IoU, mIoU_per_class_metric, mIoU_metric, losses_metric
@@ -29,6 +30,7 @@ class ObjectSegmentation(pl.LightningModule):
         # model
         self.interactive4d = Interactive4D(num_heads=8, num_decoders=3, num_levels=1, hidden_dim=128, dim_feedforward=1024, shared_decoder=False, num_bg_queries=10, dropout=0.0, pre_norm=False, aux=True, voxel_size=config.data.voxel_size, sample_sizes=[4000, 8000, 16000, 32000])
         self.optional_freeze = nullcontext
+        self.dataset_type = self.config.general.dataset
 
         weight_dict = {
             # self.config.model.num_queries
@@ -128,7 +130,7 @@ class ObjectSegmentation(pl.LightningModule):
         with torch.no_grad():
             pred_logits = outputs["pred_masks"]
             pred = [p.argmax(-1) for p in pred_logits]
-            general_miou, label_miou_dict = mean_iou(pred, labels, obj2label)
+            general_miou, label_miou_dict = mean_iou(pred, labels, obj2label, self.dataset_type)
             label_miou_dict = {"trainer/" + k: v for k, v in label_miou_dict.items()}
 
         self.log("trainer/loss", losses, prog_bar=True, on_step=True)
@@ -271,7 +273,7 @@ class ObjectSegmentation(pl.LightningModule):
 
             if current_num_clicks != 0:
                 # mean_iou here is calculated for just with the points responsible for the quantized values!
-                general_miou, label_miou_dict, objects_info = mean_iou_validation(updated_pred, labels, obj2label)
+                general_miou, label_miou_dict, objects_info = mean_iou_validation(updated_pred, labels, obj2label, self.dataset_type)
 
                 label_miou_dict = {"validation/" + k: v for k, v in label_miou_dict.items()}
                 self.log("validation/full_mIoU", sample_iou, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=True)
@@ -405,19 +407,37 @@ class ObjectSegmentation(pl.LightningModule):
             volume_augmentations_path=self.config.data.datasets.volume_augmentations_path,
             mode="train",
             instance_population=self.config.data.datasets.instance_population,
+            center_coordinates=self.config.data.datasets.center_coordinates,
         )
-        self.validation_dataset = LidarDataset(
-            data_dir=self.config.data.datasets.data_dir,
-            add_distance=self.config.data.datasets.add_distance,
-            sweep=self.config.data.datasets.sweep,
-            segment_full_scene=self.config.data.datasets.segment_full_scene,
-            obj_type=self.config.data.datasets.obj_type,
-            sample_choice=self.config.data.datasets.sample_choice_validation,
-            ignore_label=self.config.data.ignore_label,
-            mode="validation",
-            instance_population=0,  # self.config.data.datasets.instance_population
-            volume_augmentations_path=None,
-        )
+        if self.config.general.dataset == "semantickitti":
+            self.validation_dataset = LidarDataset(
+                data_dir=self.config.data.datasets.data_dir,
+                add_distance=self.config.data.datasets.add_distance,
+                sweep=self.config.data.datasets.sweep,
+                segment_full_scene=self.config.data.datasets.segment_full_scene,
+                obj_type=self.config.data.datasets.obj_type,
+                sample_choice=self.config.data.datasets.sample_choice_validation,
+                ignore_label=self.config.data.ignore_label,
+                mode="validation",
+                instance_population=0,  # self.config.data.datasets.instance_population
+                volume_augmentations_path=None,
+                center_coordinates=self.config.data.datasets.center_coordinates,
+            )
+        elif "nuScenes" in self.config.general.dataset:
+            self.validation_dataset = LidarDatasetNuscenes(
+                data_dir=self.config.data.datasets.data_dir,
+                add_distance=self.config.data.datasets.add_distance,
+                sweep=self.config.data.datasets.sweep,
+                segment_full_scene=self.config.data.datasets.segment_full_scene,
+                obj_type=self.config.data.datasets.obj_type,
+                sample_choice=self.config.data.datasets.sample_choice_validation,
+                ignore_label=self.config.data.ignore_label,
+                mode="validation",
+                instance_population=0,  # self.config.data.datasets.instance_population
+                volume_augmentations_path=None,
+                center_coordinates=self.config.data.datasets.center_coordinates,
+                dataset_type=self.config.general.dataset,
+            )
         # self.test_dataset = hydra.utils.instantiate(self.config.data.test_dataset)
 
     def train_dataloader(self):
@@ -516,8 +536,9 @@ class ObjectSegmentation(pl.LightningModule):
         if obj_to_remove:
             # print("Removing objects from the scene due to quantization")
             for i, key in obj_to_remove:
-                del click_idx[i][key]
-                del obj2label[i][key]
+                if key != "0":
+                    del click_idx[i][key]
+                    del obj2label[i][key]
 
             for i in range(batch_size):
                 mapping = {old_key: new_key for new_key, old_key in enumerate(sorted(click_idx[i].keys(), key=int))}

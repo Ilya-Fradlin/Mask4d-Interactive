@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 export NCCL_SOCKET_IFNAME=en,eth,em,bond
-export CUDA_LAUNCH_BLOCKING=1
+# export CUDA_LAUNCH_BLOCKING=1
 
 # if [ "$#" -ne 11 ]; then
 #     echo "Usage ${0} <port_id> <data_file> <ann_sup> <training_sup> <path_pretrain_model> <stage> <num_workers> <lr> <batch_size> <iterations> <steps>"
@@ -23,5 +23,5 @@ export CUDA_LAUNCH_BLOCKING=1
 # sbatch --partition=trtx-lo -c 4 --gres=gpu:1 --mem=24G --job-name=train_agile3d --time=6-00:00:00 \
 # --signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/output_%j.txt train_multi_scannet40.sh
 
-sbatch --partition=a40-lo -c 16 --gres=gpu:1 --mem=48G --job-name=train_mask4d --time=1-00:00:00 \
---signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/output_%j.txt evaluate.sh
+sbatch --partition=a40-lo -c 16 --gres=gpu:1 --mem=48G --job-name=train_mask4d --time=2-00:00:00 \
+--signal=TERM@120 --mail-user=ilya.fradlin@rwth-aachen.de --mail-type=FAIL --output=outputs/%j_centroidclick_IoUformula_60epochs_Augmentation_clicklimit_bboxloss_nuscenes_centered_validation.txt evaluate.sh

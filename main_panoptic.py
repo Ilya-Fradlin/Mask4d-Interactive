@@ -36,10 +36,10 @@ def get_parameters(cfg: DictConfig):
         os.environ["MKL_NUM_THREADS"] = "1"
         # Add debugging options + No logging
         cfg.data.dataloader.voxel_size = 0.2
-        cfg.data.dataloader.batch_size = 1
+        cfg.data.dataloader.batch_size = 2
         cfg.data.dataloader.num_workers = 1
         cfg.trainer.detect_anomaly = True
-        cfg.trainer.num_sanity_val_steps = 0
+        cfg.trainer.num_sanity_val_steps = 1
         cfg.trainer.log_every_n_steps = 1
         cfg.trainer.max_epochs = 30
         cfg.trainer.check_val_every_n_epoch = 5
@@ -119,7 +119,7 @@ def train(cfg: DictConfig):
         detect_anomaly=cfg.trainer.detect_anomaly,
         strategy="ddp_find_unused_parameters_false",
         profiler="simple",
-        num_sanity_val_steps=0,
+        num_sanity_val_steps=cfg.trainer.num_sanity_val_steps,
     )
     runner.fit(model, ckpt_path=cfg.general.ckpt_path)
 
@@ -152,7 +152,8 @@ def test(cfg: DictConfig):
 
 def main():
     # Load the configuration from the YAML file
-    cfg = OmegaConf.load("config.yaml")
+    # cfg = OmegaConf.load("config.yaml")
+    cfg = OmegaConf.load("config_validation.yaml")
     cfg.general.experiment_name = cfg.general.experiment_name.replace("now", datetime.now().strftime("%Y-%m-%d_%H%M%S"))
     resolved_cfg = OmegaConf.to_container(cfg, resolve=True)
     print(resolved_cfg)

@@ -1,6 +1,5 @@
 import numpy as np
 import volumentations as V
-import csv
 import yaml
 import json
 from torch.utils.data import Dataset
@@ -9,7 +8,7 @@ from typing import List, Optional, Union
 from random import choice, uniform, sample as random_sample, random
 
 
-class LidarDataset(Dataset):
+class LidarDatasetNuscenes(Dataset):
     def __init__(
         self,
         data_dir: Optional[str] = "/globalwork/fradlin/mask4d-interactive/processed/semantic_kitti",
@@ -22,12 +21,13 @@ class LidarDataset(Dataset):
         sweep: Optional[int] = 1,
         segment_full_scene=True,
         obj_type="all",
-        center_coordinates = False,
+        center_coordinates=False,
+        dataset_type="nuScenes_general",
     ):
-        super(LidarDataset, self).__init__()
+        super(LidarDatasetNuscenes, self).__init__()
 
         self.mode = mode
-        self.data_dir = data_dir
+        self.data_dir = "datasets/preprocessing"
         self.ignore_label = ignore_label
         self.add_distance = add_distance
         self.instance_population = instance_population
@@ -35,35 +35,21 @@ class LidarDataset(Dataset):
         self.segment_full_scene = segment_full_scene
         self.obj_type = obj_type
         self.center_coordinates = center_coordinates
-        self.config = self._load_yaml("conf/semantic-kitti.yaml")
+        self.dataset_type = dataset_type
 
         # loading database file
         database_path = Path(self.data_dir)
-        database_file = database_path.joinpath(f"{sample_choice}_{mode}_list.json")
+        database_file = database_path.joinpath(f"nuscenes_validation_list.json")
         if not database_file.exists():
             print(f"generate {database_file}")
             exit()
         with open(database_file) as json_file:
             self.data = json.load(json_file)
-        self.label_info = self._select_correct_labels(self.config["learning_ignore"])
 
         # Id evaluating thing only- remove scenes with no things
         if obj_type == "things":
-            csv_file_path = "datasets/preprocessing/corrupted_scenes.csv"
-            sequences_with_no_things = set()
-            with open(csv_file_path, mode="r") as file:
-                csv_reader = csv.reader(file)
-                for row in csv_reader:
-                    if row[0] == "scene":
-                        continue
-                    sequences_with_no_things.add((row[0], row[1]))
-                keys_to_remove = []
-                for key in self.data.keys():
-                    _, scene, sequence = key.split("_")
-                    if (scene, sequence) in sequences_with_no_things:
-                        keys_to_remove.append(key)
-                for key in keys_to_remove:
-                    del self.data[key]
+            # TODO: Implement this
+            raise NotImplementedError("This feature is not implemented yet")
 
         # reformulating in sweeps
         data = [[]]
@@ -112,7 +98,8 @@ class LidarDataset(Dataset):
         # for debugging can specify idx = 1397 (for scene 1397)
         label2obj_map, obj2label_map, click_idx, max_instance_id = {}, {}, {}, 0
         for time, scan in enumerate(self.data[idx]):
-            points = np.fromfile(scan["filepath"], dtype=np.float32).reshape(-1, 4)
+            # points = np.fromfile(scan["filepath"], dtype=np.float32).reshape(-1, 4)
+            points, features = read_bin_point_cloud_nuscene(scan["filepath"])
             coordinates = points[:, :3]
             # rotate and translate
             pose = np.array(scan["pose"]).T
@@ -121,7 +108,7 @@ class LidarDataset(Dataset):
             acc_num_points.append(acc_num_points[-1] + len(coordinates))
 
             # features
-            features = points[:, 3:4]  # intensity
+            # features = points[:, 3:4]  # intensity
             time_array = np.ones((features.shape[0], 1)) * time
             features = np.hstack((time_array, features))  # (time, intensity)
             features_list.append(features)
@@ -172,12 +159,6 @@ class LidarDataset(Dataset):
 
         features = np.hstack((coordinates, features))
 
-        # TODO: Figure out how to handle the labels, 255 is ignored?
-        # labels[:, 0] = np.vectorize(self.label_info.__getitem__)(labels[:, 0])
-        # self.label_info =
-        # {0: 255, 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9,
-        # 11: 10, 12: 11, 13: 12, 14: 13, 15: 14, 16: 15, 17: 16, 18: 17, 19: 18}
-
         return {
             "sequence": scan["filepath"],
             "num_points": acc_num_points,
@@ -189,21 +170,21 @@ class LidarDataset(Dataset):
         }
 
     def generate_object_labels(self, scan, max_instance_id, label2obj_map, obj2label_map, click_idx):
-        # should use somewhere: self.ignore_label
+        # panoptic_label are defined as category_id * 1000 + instance_id
+        file_path = scan["label_filepath"]
+        panoptic_labels = np.load(file_path)["data"]
+        if self.dataset_type == "nuScenes_challenge":
+            panoptic_labels = self.update_challenge_labels(panoptic_labels)
+        # semantic_labels = panoptic_labels // 1000  # general class index
+        instance_ids = panoptic_labels % 1000
 
-        panoptic_labels = np.fromfile(scan["label_filepath"], dtype=np.uint32)
-        current_max_instance_id = np.amax(panoptic_labels >> 16)
+        current_max_instance_id = np.amax(instance_ids)
         if current_max_instance_id > max_instance_id:
             max_instance_id = current_max_instance_id
         # Extract semantic labels
-        semantic_labels = panoptic_labels & 0xFFFF
-        updated_semantic_labels = np.vectorize(self.config["learning_map"].__getitem__)(semantic_labels)
-        # Update semantic labels
-        panoptic_labels &= np.array(~0xFFFF).astype(np.uint32)  # Clear lower 16 bits
-        panoptic_labels |= updated_semantic_labels.astype(np.uint32)  # Set lower 16 bits with updated semantic labels
 
         if "validation" in self.mode and not self.segment_full_scene:
-            # TODO: Hanfle the case when sweep > 1
+            # TODO: Handle the case when sweep > 1
             if self.obj_type != "all":
                 # we need to keep only the things or only the stuff
                 scan["clicks"], scan["obj"] = self.select_only_desired_objects_subsampled(self.obj_type, scan["obj"], scan["clicks"])
@@ -213,10 +194,13 @@ class LidarDataset(Dataset):
                 obj2label_map[str(int(obj_idx))] = int(label)
             click_idx = scan["clicks"]
 
-        elif ("train" in self.mode) or ("validation" in self.mode and self.segment_full_scene):
+        elif "validation" in self.mode and self.segment_full_scene:
             # no pre-defined object selected, choose random objects
             obj_labels = np.zeros(panoptic_labels.shape)
-            unique_panoptic_labels = scan["unique_panoptic_labels"]
+            # unique_panoptic_labels = scan["unique_panoptic_labels"]
+            unique_panoptic_labels = list(np.unique(panoptic_labels))
+            if 0 in unique_panoptic_labels:
+                unique_panoptic_labels.remove(0)
             if self.obj_type != "all":
                 unique_panoptic_labels = self.select_only_desired_objects(self.obj_type, unique_panoptic_labels)
 
@@ -316,17 +300,6 @@ class LidarDataset(Dataset):
             file = yaml.safe_load(f)
         return file
 
-    def _select_correct_labels(self, learning_ignore):
-        count = 0
-        label_info = dict()
-        for k, v in learning_ignore.items():
-            if v:
-                label_info[k] = self.ignore_label
-            else:
-                label_info[k] = count
-                count += 1
-        return label_info
-
     def populate_instances(self, max_instance_id, pc_center, instance_population):
         coordinates_list = []
         features_list = []
@@ -387,6 +360,28 @@ class LidarDataset(Dataset):
         labels = np.hstack((labels, new_instance_labels))
         return labels, obj2label_maps_list, click_idx
 
+    def update_challenge_labels(self, panoptic_labels):
+        general2challenge_mapping = {1: 0, 5: 0, 7: 0, 8: 0, 10: 0, 11: 0, 13: 0, 19: 0, 20: 0, 0: 0, 29: 0, 31: 0, 9: 1, 14: 2, 15: 3, 16: 3, 17: 4, 18: 5, 21: 6, 2: 7, 3: 7, 4: 7, 6: 7, 12: 8, 22: 9, 23: 10, 24: 11, 25: 12, 26: 13, 27: 14, 28: 15, 30: 16}
+
+        updated_labels = np.zeros_like(panoptic_labels)
+        for i in range(panoptic_labels.shape[0]):
+            # Extract category_id and instance_id
+            label = panoptic_labels[i]
+            category_id = label // 1000
+            instance_id = label % 1000
+
+            # Update category_id using the mapping
+            if category_id in general2challenge_mapping:
+                new_category_id = general2challenge_mapping[category_id]
+                # Combine the new category_id and instance_id
+                new_label = new_category_id * 1000 + instance_id
+                updated_labels[i] = new_label
+            else:
+                # If category_id is not in mapping, keep the original label
+                updated_labels[i] = label
+
+        return updated_labels
+
 
 def make_scan_transforms(split):
 
@@ -396,3 +391,19 @@ def make_scan_transforms(split):
         return False
 
     raise ValueError(f"unknown {split}")
+
+
+def read_bin_point_cloud_nuscene(file_path):
+    """
+    Loads a .bin file containing the lidarseg or lidar panoptic labels.
+    :param bin_path: Path to the .bin file.
+    :param type: semantic type, 'lidarseg': stored in 8-bit format, 'panoptic': store in 32-bit format.
+    :return: An array containing the labels, with dtype of np.uint8 for lidarseg and np.int32 for panoptic.
+    """
+    scan = np.fromfile(file_path, dtype=np.float32)
+    scan_data = scan.reshape((-1, 5))[:, :4]  #  (x, y, z, intensity)
+    points = scan_data[:, :3]  # x, y, z
+    intensities = scan_data[:, 3].reshape(-1, 1)  # Intensity
+    intensities /= 255  # Normalise to [0, 1]
+
+    return points, intensities

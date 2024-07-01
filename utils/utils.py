@@ -82,6 +82,11 @@ def generate_wandb_objects3d(raw_coords, raw_coords_full, labels, labels_full, p
 
     # Create a mapping from label to color
     unique_labels = torch.unique(labels_full)
+    # Check if 0 is in unique_labels
+    if not (unique_labels == 0).any():
+        # If 0 is not in unique_labels, concatenate 0 to it
+        zero_tensor = torch.tensor([0], device=unique_labels.device)
+        unique_labels = torch.cat((unique_labels, zero_tensor))
     num_labels = unique_labels.size(0)
     distinct_colors = generate_distinct_colors_kmeans(num_labels)
     label_to_color = {label.item(): distinct_colors[i] for i, label in enumerate(unique_labels)}

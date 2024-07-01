@@ -18,34 +18,13 @@ def mean_iou_single(pred, labels):
     return iou
 
 
-def mean_iou(pred, labels, obj2label):
+def mean_iou(pred, labels, obj2label, dataset_type="semantickitti"):
     """Calculate the mean IoU for a batch"""
 
     assert len(pred) == len(labels)
     bs = len(pred)
     iou_batch = 0.0
-    label_mapping = {
-        0: "unlabeled",
-        1: "car",
-        2: "bicycle",
-        3: "motorcycle",
-        4: "truck",
-        5: "other-vehicle",
-        6: "person",
-        7: "bicyclist",
-        8: "motorcyclist",
-        9: "road",
-        10: "parking",
-        11: "sidewalk",
-        12: "other-ground",
-        13: "building",
-        14: "fence",
-        15: "vegetation",
-        16: "trunk",
-        17: "terrain",
-        18: "pole",
-        19: "traffic-sign",
-    }
+    label_mapping = get_label_mapping(dataset_type)[0]
     iou_per_label = {}  # Initialize IoU for the entire batch
     for label_name in label_mapping.values():
         iou_per_label[label_name] = []
@@ -57,7 +36,10 @@ def mean_iou(pred, labels, obj2label):
         obj_num = len(obj_ids)
         iou_sample = 0.0
         for obj_id in obj_ids:
-            original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] & 0xFFFF]
+            if dataset_type == "semantickitti":
+                original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] & 0xFFFF]
+            elif "nuScenes" in dataset_type:
+                original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] // 1000]
             obj_iou = mean_iou_single(pred_sample == obj_id, labels_sample == obj_id)
             iou_sample += obj_iou
             # Accumulate IoU for each original label
@@ -75,40 +57,22 @@ def mean_iou(pred, labels, obj2label):
     return iou_batch, average_iou_per_label
 
 
-def mean_iou_validation(pred, labels, obj2label):
+def mean_iou_validation(pred, labels, obj2label, dataset_type="semantickitti"):
     """Calculate the mean IoU for a batch"""
     assert len(pred) == len(labels)
     bs = len(pred)
     iou_batch = 0.0
-    label_mapping = {
-        0: "unlabeled",
-        1: "car",
-        2: "bicycle",
-        3: "motorcycle",
-        4: "truck",
-        5: "other-vehicle",
-        6: "person",
-        7: "bicyclist",
-        8: "motorcyclist",
-        9: "road",
-        10: "parking",
-        11: "sidewalk",
-        12: "other-ground",
-        13: "building",
-        14: "fence",
-        15: "vegetation",
-        16: "trunk",
-        17: "terrain",
-        18: "pole",
-        19: "traffic-sign",
-    }
+    label_mapping = get_label_mapping(dataset_type)[0]
     iou_per_label = {}  # Initialize IoU for the entire batch
     objects_info = {}  # Initialize IoU for the entire batch
     for label_name in label_mapping.values():
         iou_per_label[label_name] = []
     for obj_id, panoptic_label in obj2label[0].items():
         objects_info[obj_id] = {}
-        objects_info[obj_id]["class"] = label_mapping[obj2label[0][obj_id] & 0xFFFF]
+        if dataset_type == "semantickitti":
+            objects_info[obj_id]["class"] = label_mapping[obj2label[0][obj_id] & 0xFFFF]
+        elif "nuScenes" in dataset_type:
+            objects_info[obj_id]["class"] = label_mapping[obj2label[0][obj_id] // 1000]
 
     for b in range(bs):
         pred_sample = pred[b]
@@ -118,7 +82,10 @@ def mean_iou_validation(pred, labels, obj2label):
         obj_num = len(obj_ids)
         iou_sample = 0.0
         for obj_id in obj_ids:
-            original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] & 0xFFFF]
+            if dataset_type == "semantickitti":
+                original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] & 0xFFFF]
+            elif "nuScenes" in dataset_type:
+                original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] // 1000]
             obj_iou = mean_iou_single(pred_sample == obj_id, labels_sample == obj_id)
             objects_info[str(int(obj_id.item()))]["miou"] = obj_iou.item()
             iou_sample += obj_iou
@@ -315,13 +282,13 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
     labels_qv = labels_qv.float()
     pred_label = pred_qv.float()
 
-    # # Do not generate new clicks for obj that has been clicked more than the threshold
-    # if current_click_idx is not None:
-    #     for obj_id, click_ids in current_click_idx.items():
-    #         if obj_id != "0":  # background can receive as many clicks as needed
-    #             if len(click_ids) >= 20:  # TODO: inject this as a click_threshold parameter
-    #                 # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
-    #                 pred_label[labels_qv == int(obj_id)] = int(obj_id)
+    # Do not generate new clicks for obj that has been clicked more than the threshold
+    if current_click_idx is not None:
+        for obj_id, click_ids in current_click_idx.items():
+            if obj_id != "0":  # background can receive as many clicks as needed
+                if len(click_ids) >= 20:  # TODO: inject this as a click_threshold parameter
+                    # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
+                    pred_label[labels_qv == int(obj_id)] = int(obj_id)
 
     error_mask = torch.abs(pred_label - labels_qv) > 0
 
@@ -390,12 +357,12 @@ def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_cl
     pred_label = pred_qv.float()
 
     # Do not generate new clicks for obj that has been clicked more than the threshold
-    # if current_click_idx is not None:
-    #     for obj_id, click_ids in current_click_idx.items():
-    #         if obj_id != "0":  # background can receive as many clicks as needed
-    #             if len(click_ids) >= 20:  # TODO: inject this as a click_threshold parameter
-    #                 # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
-    #                 pred_label[labels_qv == int(obj_id)] = int(obj_id)
+    if current_click_idx is not None:
+        for obj_id, click_ids in current_click_idx.items():
+            if obj_id != "0":  # background can receive as many clicks as needed
+                if len(click_ids) >= 20:  # TODO: inject this as a click_threshold parameter
+                    # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
+                    pred_label[labels_qv == int(obj_id)] = int(obj_id)
 
     error_mask = torch.abs(pred_label - labels_qv) > 0
 
@@ -577,3 +544,71 @@ def decode_cluster_ids(cluster_ids, prime1=9973, prime2=11):
     labels_qv = (cluster_ids - pred_label * prime2) // prime1
 
     return labels_qv, pred_label
+
+
+def get_label_mapping(dataset_type):
+    if dataset_type == "semantickitti":
+        label_mapping = {0: "unlabeled", 1: "car", 2: "bicycle", 3: "motorcycle", 4: "truck", 5: "other-vehicle", 6: "person", 7: "bicyclist", 8: "motorcyclist", 9: "road", 10: "parking", 11: "sidewalk", 12: "other-ground", 13: "building", 14: "fence", 15: "vegetation", 16: "trunk", 17: "terrain", 18: "pole", 19: "traffic-sign"}
+        things_labels = [1, 2, 3, 4, 5, 6, 7, 8]  # [1:car,  2:bicycle,  3:motorcycle,  4:truck,  5:other-vehicle,  6:person,  7:bicyclist,  8:motorcyclist ]
+        stuff_labels = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]  #  [9:road,  10:parking, 11:sidewalk ,12:other-ground ,13:building ,14:fence ,15:vegetation ,16:trunk ,17:terrain ,18:pole ,19:traffic-sign]
+    elif dataset_type == "nuScenes_challenge":
+        label_mapping = {
+            0: "void / ignore",
+            1: "barrier (thing)",
+            2: "bicycle (thing)",
+            3: "bus (thing)",
+            4: "car (thing)",
+            5: "construction_vehicle (thing)",
+            6: "motorcycle (thing)",
+            7: "pedestrian (thing)",
+            8: "traffic_cone (thing)",
+            9: "trailer (thing)",
+            10: "truck (thing)",
+            11: "driveable_surface (stuff)",
+            12: "other_flat (stuff)",
+            13: "sidewalk (stuff)",
+            14: "terrain (stuff)",
+            15: "manmade (stuff)",
+            16: "vegetation (stuff)",
+        }
+        things_labels = [9, 14, 15, 16, 17, 18, 21, 2, 3, 4, 6, 12, 22, 23]
+        stuff_labels = [24, 25, 26, 27, 28, 30]
+        ignore_labels = [1, 5, 7, 8, 10, 11, 13, 19, 20, 0, 29, 31]
+    elif dataset_type == "nuScenes_general":
+        label_mapping = {
+            0: "noise",
+            1: "animal",
+            2: "human.pedestrian.adult",
+            3: "human.pedestrian.child",
+            4: "human.pedestrian.construction_worker",
+            5: "human.pedestrian.personal_mobility",
+            6: "human.pedestrian.police_officer",
+            7: "human.pedestrian.stroller",
+            8: "human.pedestrian.wheelchair",
+            9: "movable_object.barrier",
+            10: "movable_object.debris",
+            11: "movable_object.pushable_pullable",
+            12: "movable_object.trafficcone",
+            13: "static_object.bicycle_rack",
+            14: "vehicle.bicycle",
+            15: "vehicle.bus.bendy",
+            16: "vehicle.bus.rigid",
+            17: "vehicle.car",
+            18: "vehicle.construction",
+            19: "vehicle.emergency.ambulance",
+            20: "vehicle.emergency.police",
+            21: "vehicle.motorcycle",
+            22: "vehicle.trailer",
+            23: "vehicle.truck",
+            24: "flat.driveable_surface",
+            25: "flat.other",
+            26: "flat.sidewalk",
+            27: "flat.terrain",
+            28: "static.manmade",
+            29: "static.other",
+            30: "static.vegetation",
+            31: "vehicle.ego",
+        }
+        things_labels = []
+        stuff_labels = []
+    return label_mapping, things_labels

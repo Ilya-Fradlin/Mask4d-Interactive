@@ -3,6 +3,7 @@ general:
   gpus: null
   seed: 42
   project_name: Mask4D-Interactive
+  dataset: semantickitti # semantickitti / nuScenes_general / nuScenes_challenge
   workspace: Ilyafr97
   instance_population: 20
   dbscan_eps: null
@@ -26,6 +27,7 @@ trainer:
   detect_anomaly: false
   limit_train_batches: null
   limit_val_batches: null
+  num_sanity_val_steps: 0
 
 data:
   ignore_label: 255
@@ -38,6 +40,7 @@ data:
     sweep: 1
     segment_full_scene: true
     instance_population: 0
+    center_coordinates: true
     volume_augmentations_path: conf/augmentation/volumentations_aug.yaml
 
   dataloader:
@@ -54,3 +57,4 @@ loss:
   aux: true
   bce_loss_coef: 1.0
   dice_loss_coef: 2.0
+  bbox_loss_coef: 0.0
