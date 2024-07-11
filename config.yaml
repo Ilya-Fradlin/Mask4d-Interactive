@@ -17,8 +17,8 @@ general:
   iou_targets: [0.5, 0.65, 0.80, 0.85, 0.90]
 
 trainer:
-  num_devices: 1
-  num_nodes: 1
+  num_devices: 1 # 4
+  num_nodes: 1 # 4
   accelerator: auto
   max_epochs: 30
   check_val_every_n_epoch: 50
@@ -31,14 +31,14 @@ trainer:
 data:
   ignore_label: 255
   datasets:
-    data_dir: /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti # /p/project/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing
+    data_dir: /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti # /p/scratch/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing
     sample_choice_train: full # full / subsampled / short
     sample_choice_validation: short # full / subsampled / short
     obj_type: all # things, stuff, all
     add_distance: true
     sweep: 1
     segment_full_scene: true
-    instance_population: 20
+    instance_population: 0
     center_coordinates: true
     volume_augmentations_path: conf/augmentation/volumentations_aug.yaml
 

@@ -22,7 +22,7 @@ class LidarDataset(Dataset):
         sweep: Optional[int] = 1,
         segment_full_scene=True,
         obj_type="all",
-        center_coordinates = False,
+        center_coordinates=False,
     ):
         super(LidarDataset, self).__init__()
 
@@ -86,6 +86,7 @@ class LidarDataset(Dataset):
             self.volume_augmentations = V.load(volume_augmentations_path, data_format="yaml")
         if instance_population > 0:
             # self.instance_data = self._load_yaml(database_path / f"{mode}_instances_database.yaml")
+            # self.instance_data = self._load_yaml("/p/scratch/objectsegvideo/ilya/semantickitti_instances/instances/trainval_instances_database.yaml")
             self.instance_data = self._load_yaml("/globalwork/fradlin/data/processed/semantic_kitti/trainval_instances_database.yaml")
 
     def chunks(self, lst, n):

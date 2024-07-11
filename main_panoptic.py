@@ -69,15 +69,15 @@ def get_parameters(cfg: DictConfig):
             # else:
             #     print("EXPERIMENT ALREADY EXIST")
             #     cfg.general.ckpt_path = f"{cfg.general.save_dir}/last-epoch.ckpt"
-            loggers.append(
-                WandbLogger(
-                    project=cfg.general.project_name,
-                    name=cfg.general.experiment_name,
-                    save_dir=cfg.general.save_dir,
-                    id=cfg.general.experiment_name,
-                    entity="rwth-data-science",
-                )
+        loggers.append(
+            WandbLogger(
+                project=cfg.general.project_name,
+                name=cfg.general.experiment_name,
+                save_dir=cfg.general.save_dir,
+                id=cfg.general.experiment_name,
+                entity="rwth-data-science",
             )
+        )
         loggers[-1].log_hyperparams(flatten_dict(OmegaConf.to_container(cfg, resolve=True)))
 
     model = ObjectSegmentation(cfg)
@@ -152,8 +152,8 @@ def test(cfg: DictConfig):
 
 def main():
     # Load the configuration from the YAML file
-    # cfg = OmegaConf.load("config.yaml")
-    cfg = OmegaConf.load("config_validation.yaml")
+    cfg = OmegaConf.load("config.yaml")
+    # cfg = OmegaConf.load("config_validation.yaml")
     cfg.general.experiment_name = cfg.general.experiment_name.replace("now", datetime.now().strftime("%Y-%m-%d_%H%M%S"))
     resolved_cfg = OmegaConf.to_container(cfg, resolve=True)
     print(resolved_cfg)

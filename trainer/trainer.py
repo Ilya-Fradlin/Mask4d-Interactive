@@ -167,7 +167,8 @@ class ObjectSegmentation(pl.LightningModule):
         labels_full = [torch.from_numpy(l).to(coords) for l in target["labels_full"]]
         click_idx = data["click_idx"]
         inverse_maps = target["inverse_maps"]
-        # TODO: handle clicks in multiple sweep better (for now just picks the first clicks from the first scene)
+        cluster_dict = {}
+
         obj2label = [mapping[0] for mapping in target["obj2labels"]]
         batch_indicators = coords[:, 0]
         num_obj = [len(mapping.keys()) for mapping in obj2label]
@@ -257,7 +258,7 @@ class ObjectSegmentation(pl.LightningModule):
                     objects_info = get_objects_iou(pred, labels)
                 else:
                     objects_info = get_objects_iou(updated_pred, labels)
-                new_clicks, new_clicks_num, new_click_pos, new_click_time = get_iou_based_simulated_clicks(
+                new_clicks, new_clicks_num, new_click_pos, new_click_time, cluster_dict = get_iou_based_simulated_clicks(
                     sample_pred,
                     sample_labels,
                     sample_raw_coords,
@@ -265,6 +266,7 @@ class ObjectSegmentation(pl.LightningModule):
                     objects_info=objects_info[idx],
                     current_click_idx=click_idx[idx],
                     training=False,
+                    cluster_dict=cluster_dict,
                 )
 
                 ### add new clicks ###
@@ -367,6 +369,11 @@ class ObjectSegmentation(pl.LightningModule):
                 "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
                 "validation/Interactive_metrics/IoU_4": stats["IoU@4"],
                 "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
+                "validation/Interactive_metrics/IoU_5": stats["IoU@6"],
+                "validation/Interactive_metrics/IoU_5": stats["IoU@7"],
+                "validation/Interactive_metrics/IoU_5": stats["IoU@8"],
+                "validation/Interactive_metrics/IoU_5": stats["IoU@9"],
+                "validation/Interactive_metrics/IoU_5": stats["IoU@10"],
             }
         )
         # self.validation_step_outputs.clear()  # free memory
@@ -470,6 +477,7 @@ class ObjectSegmentation(pl.LightningModule):
     ):
         batch_size = batch_indicators.max() + 1
         current_num_iter = 0
+        cluster_dict = {}
         num_forward_iters = random.randint(0, self.config.general.max_num_clicks - 1)
         # self.log(
         #     "trainer/forward_iterations", num_forward_iters, prog_bar=True, on_epoch=False, on_step=True, batch_size=batch_size
@@ -507,7 +515,7 @@ class ObjectSegmentation(pl.LightningModule):
 
                     objects_info = get_objects_iou(pred, labels)
 
-                    new_clicks, new_clicks_num, new_click_pos, new_click_time = get_iou_based_simulated_clicks(
+                    new_clicks, new_clicks_num, new_click_pos, new_click_time, cluster_dict = get_iou_based_simulated_clicks(
                         sample_pred,
                         sample_labels,
                         sample_raw_coords,
@@ -515,6 +523,7 @@ class ObjectSegmentation(pl.LightningModule):
                         objects_info=objects_info[idx],
                         current_click_idx=click_idx[idx],
                         training=True,
+                        cluster_dict=cluster_dict,
                     )
 
                     ### add new clicks ###
@@ -565,3 +574,54 @@ class CustomAdamW(AdamW):
                 if "step" in state and state["step"].is_cuda:
                     state["step"] = state["step"].cpu()
         super().step(closure)
+
+
+def save_tensor_as_pcd(tensor):
+    """
+    Saves a 3D point cloud tensor to a .pcd file.
+
+    Parameters:
+    - tensor (torch.Tensor): The input tensor of shape [N, 3] representing the point cloud.
+    """
+    import open3d as o3d
+
+    filename = "output.pcd"
+    if not isinstance(tensor, torch.Tensor):
+        raise TypeError("Input must be a torch.Tensor")
+    if tensor.shape[1] != 3:
+        raise ValueError("Tensor must have shape [N, 3]")
+
+    # Convert the tensor to a NumPy array
+    points = tensor.cpu().numpy()
+
+    # Create an Open3D PointCloud object
+    point_cloud = o3d.geometry.PointCloud()
+    point_cloud.points = o3d.utility.Vector3dVector(points)
+
+    # Save the point cloud to a .pcd file
+    o3d.io.write_point_cloud(filename, point_cloud)
+    print(f"Point cloud saved to {filename}")
+
+
+def gather_point_cloud_info(coords):
+    # Calculate max and min along each axis
+    max_vals = torch.max(coords, dim=0).values
+    min_vals = torch.min(coords, dim=0).values
+
+    # Calculate the size of the scene
+    scene_size = max_vals - min_vals
+
+    # Calculate the mean and standard deviation along each axis
+    mean_vals = torch.mean(coords, dim=0)
+    std_vals = torch.std(coords, dim=0)
+
+    # Calculate the number of points
+    num_points = coords.shape[0]
+
+    # Print the gathered information
+    print(f"Number of points: {num_points}")
+    print(f"Max values along each axis: {max_vals}")
+    print(f"Min values along each axis: {min_vals}")
+    print(f"Size of the scene: {scene_size}")
+    print(f"Mean values along each axis: {mean_vals}")
+    print(f"Standard deviation along each axis: {std_vals}")

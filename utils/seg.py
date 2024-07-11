@@ -198,29 +198,18 @@ def get_next_click_coo_torch(discrete_coords, unique_labels, gt, pred, pairwise_
     return center_global_id, center_coo, center_label, max_dist, candidates
 
 
-def get_next_click_random(discrete_coords, unique_labels, gt, pred, pairwise_distances):
-    """Sample the next click from the center of the error region"""
-    zero_indices = unique_labels == 0
-    one_indices = unique_labels == 1
-    if zero_indices.sum() == 0 or one_indices.sum() == 0:
-        return None, None, None, -1, None, None
+def get_next_click_random(coords, error):
+    # Extract the coordinates of the wrongly classified points
+    wrong_points = coords[error]
+    # Select random point from the error region
+    # centroid = torch.mean(wrong_points, dim=0)
+    # closest_point_index = torch.argmin(distances)
+    selected_point_index = random.randint(0, wrong_points.shape[0] - 1)
+    selected_point = wrong_points[selected_point_index]
+    # Find the point closest to the selected_point
+    distance = 0
 
-    # point furthest from border
-    center_id = random.randint(0, pairwise_distances.shape[0] - 1)
-    center_coo = discrete_coords[one_indices, :][center_id]
-    center_label = gt[one_indices][center_id]
-
-    local_mask = torch.zeros(pairwise_distances.shape[0], device=discrete_coords.device)
-    global_id_mask = torch.zeros(discrete_coords.shape[0], device=discrete_coords.device)
-    local_mask[center_id] = 1
-    global_id_mask[one_indices] = local_mask
-    center_global_id = torch.argwhere(global_id_mask)[0][0]
-
-    candidates = discrete_coords[one_indices, :]
-
-    max_dist = torch.max(pairwise_distances)
-
-    return center_global_id, center_coo, center_label, max_dist, candidates
+    return distance, selected_point, selected_point_index
 
 
 def get_next_simulated_click_multi(error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances):
@@ -352,7 +341,7 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
     return new_clicks, new_click_num, new_click_pos, new_click_time
 
 
-def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None, current_click_idx=None, training=True, objects_info={}):
+def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None, current_click_idx=None, training=True, objects_info={}, cluster_dict={}):
     labels_qv = labels_qv.float()
     pred_label = pred_qv.float()
 
@@ -367,7 +356,7 @@ def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_cl
     error_mask = torch.abs(pred_label - labels_qv) > 0
 
     if error_mask.sum() == 0:
-        return None, None, None, None
+        return None, None, None, None, None
 
     cluster_ids = labels_qv * 9973 + pred_label * 11
     # cluster_ids = labels_qv
@@ -390,6 +379,10 @@ def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_cl
 
     for cluster_id in error_cluster_ids:
         error = error_cluster_ids_mask == cluster_id
+        if int(cluster_id) not in cluster_dict.keys():
+            cluster_dict[int(cluster_id)] = 1
+        else:
+            cluster_dict[int(cluster_id)] += 1
 
         #### Original implementation
         # pairwise_distances = measure_error_size(coords_qv, error)
@@ -397,8 +390,11 @@ def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_cl
         # error_sizes[int(cluster_id)] = torch.max(pairwise_distances).tolist()
 
         #### Compute the AABB (Axis-Aligned Bounding Box) for the wrongly classified points
-        clusters_error_distance, furthest_point, furthest_point_index = find_closest_point_to_centroid(coords_qv, error)
-        original_indices = torch.nonzero(error).squeeze()  # Find the index of the furthest point in the original coords_qv
+        if cluster_dict[int(cluster_id)] < 4:
+            clusters_error_distance, furthest_point, furthest_point_index = find_closest_point_to_centroid(coords_qv, error)
+        else:  # centroid click was selected already 3 times, now select the furthest point from the centroid
+            clusters_error_distance, furthest_point, furthest_point_index = get_next_click_random(coords_qv, error)
+        original_indices = torch.nonzero(error).squeeze()
         if original_indices.dim() == 0:  # There is only one point in the error region
             furthest_point_original_index = original_indices.item()
         else:
@@ -408,7 +404,10 @@ def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_cl
         correct_label, _ = decode_cluster_ids(cluster_id)
         error_region_percetage = torch.sum(error) / (labels_qv == correct_label).count_nonzero()
         # error_sizes[int(cluster_id)] = error_point_portion / objects_info[int(correct_label)]  # Divide by iou
-        error_sizes[int(cluster_id)] = error_region_percetage * (1 - objects_info[int(correct_label)])
+        if objects_info[int(correct_label)] == 0:
+            error_sizes[int(cluster_id)] = np.inf
+        else:
+            error_sizes[int(cluster_id)] = error_region_percetage / (objects_info[int(correct_label)])
 
         #### Compute the OBB (Oriented bounding box) for the wrongly classified points
         # error_points = coords_qv[error]
@@ -429,7 +428,7 @@ def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_cl
 
     # new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi(selected_error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances)
     new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi_bbox(selected_error_cluster_ids, error_cluster_ids_mask, center_ids, center_coos, center_gts)
-    return new_clicks, new_click_num, new_click_pos, new_click_time
+    return new_clicks, new_click_num, new_click_pos, new_click_time, cluster_dict
 
 
 def extend_clicks(current_clicks, current_clicks_time, new_clicks, new_click_time):
