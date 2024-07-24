@@ -10,8 +10,9 @@ from trainer.trainer import ObjectSegmentation
 from utils.utils import flatten_dict
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import WandbLogger
-
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+
+from models.metrics.utils import MemoryUsageLogger
 
 
 def get_parameters(cfg: DictConfig):
@@ -103,6 +104,7 @@ def train(cfg: DictConfig):
         )
     )
     callbacks.append(LearningRateMonitor())
+    callbacks.append(MemoryUsageLogger())
 
     runner = Trainer(
         callbacks=callbacks,
@@ -150,10 +152,14 @@ def test(cfg: DictConfig):
     runner.test(model=model, ckpt_path=cfg.general.ckpt_path)
 
 
-def main():
+def main(running_on_julich=False):
     # Load the configuration from the YAML file
     cfg = OmegaConf.load("config.yaml")
     # cfg = OmegaConf.load("config_validation.yaml")
+
+    if running_on_julich:
+        cfg.data.datasets.data_dir = "/p/scratch/objectsegvideo/ilya/code/preprocessing"
+
     cfg.general.experiment_name = cfg.general.experiment_name.replace("now", datetime.now().strftime("%Y-%m-%d_%H%M%S"))
     resolved_cfg = OmegaConf.to_container(cfg, resolve=True)
     print(resolved_cfg)
@@ -176,4 +182,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    running_on_julich = False
+    main(running_on_julich)

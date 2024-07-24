@@ -1,6 +1,8 @@
 import json
 import torch
+import psutil
 from torchmetrics import Metric
+from pytorch_lightning.callbacks import Callback
 
 
 class IoU_at_numClicks(Metric):
@@ -104,7 +106,7 @@ class mIoU_per_class_metric(Metric):
     higher_is_better = True
     full_state_update = True
 
-    def __init__(self, training = True):
+    def __init__(self, training=True):
         super().__init__()
         self.training = training
         self.label_mapping = {
@@ -150,3 +152,21 @@ class mIoU_per_class_metric(Metric):
             else:
                 metrics_dictionary[f"validation_miou_class/{label}"] = self.__dict__[f"miou_for_{label}"] / self.__dict__[f"count_for_{label}"]
         return metrics_dictionary
+
+
+class MemoryUsageLogger(Callback):
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        self.log_memory_usage(pl_module, "train_batch_end")
+
+    def on_epoch_end(self, trainer, pl_module):
+        self.log_memory_usage(pl_module, "epoch_end")
+
+    def on_validation_end(self, trainer, pl_module):
+        self.log_memory_usage(pl_module, "validation_end")
+
+    def log_memory_usage(self, pl_module, log_point):
+        memory_info = psutil.virtual_memory()
+        cpu_memory_used = memory_info.used / (1024**3)  # Convert to GB
+        cpu_memory_available = memory_info.available / (1024**3)  # Convert to GB
+        # Use self.log to log metrics
+        pl_module.logger.experiment.log({f"System/CPU Memory Used (GB) [{log_point}]": cpu_memory_used, f"System/CPU Memory Available (GB) [{log_point}]": cpu_memory_available})

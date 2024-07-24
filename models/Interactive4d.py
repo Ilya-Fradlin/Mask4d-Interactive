@@ -30,6 +30,7 @@ class Interactive4D(nn.Module):
         aux,
         voxel_size,
         sample_sizes,
+        use_objid_attention,
     ):
         super().__init__()
 
@@ -50,6 +51,7 @@ class Interactive4D(nn.Module):
         self.aux = aux
         self.voxel_size = voxel_size
         self.sample_sizes = sample_sizes
+        self.use_objid_attention = use_objid_attention
 
         sizes = self.backbone.PLANES[-5:]
 
@@ -130,7 +132,9 @@ class Interactive4D(nn.Module):
             self.ffn_attention.append(tmp_ffn_attention)
 
         self.decoder_norm = nn.LayerNorm(hidden_dim)
-        self.time_encode = PositionalEncoding1D(hidden_dim, 800)
+        self.time_encode = PositionalEncoding1D(hidden_dim, 2000)
+        if self.use_objid_attention:
+            self.object_embedding = nn.Embedding(400, hidden_dim)
 
     def forward(self, x, raw_coordinates=None, feats=None, click_idx=None, is_eval=False):
         device = x.device
@@ -195,7 +199,20 @@ class Interactive4D(nn.Module):
 
             fg_clicks_time_idx = list(itertools.chain.from_iterable([click_time_idx_sample[str(i)] for i in range(1, fg_obj_num + 1)]))
             fg_query_time = self.time_encode[fg_clicks_time_idx].T.unsqueeze(0).to(fg_query_pos.device)
-            fg_query_pos = fg_query_pos + fg_query_time
+
+            # generate obj_id embeddings
+            current_obj_id = 1
+            obj_id_list = []
+            for count in fg_query_num_split:
+                obj_id_list.extend([current_obj_id] * count)
+                current_obj_id += 1
+            obj_id_tensor = torch.tensor(obj_id_list, dtype=torch.long).to(fg_query_pos.device)
+            fg_query_obj = self.object_embedding(obj_id_tensor).T.unsqueeze(0)
+
+            if self.use_objid_attention:
+                fg_query_pos = fg_query_pos + fg_query_time + fg_query_obj
+            else:
+                fg_query_pos = fg_query_pos + fg_query_time
 
             if len(bg_click_idx) != 0:
                 bg_click_coords = coordinates.decomposed_features[b][bg_click_idx].unsqueeze(0)
@@ -220,6 +237,12 @@ class Interactive4D(nn.Module):
                 bg_queries = torch.cat([bg_learn_queries[b], bg_queries], dim=0)
             else:
                 bg_queries = bg_learn_queries[b]
+
+            # generate bg (obj 0) obj embedding
+            bg_obj_id = torch.zeros(bg_queries.shape[0], dtype=torch.long, device=bg_query_pos.device)
+            if self.use_objid_attention:
+                bg_query_obj = self.object_embedding(bg_obj_id)
+                bg_queries += bg_query_obj
 
             src_pcd = pcd_features.decomposed_features[b]
 

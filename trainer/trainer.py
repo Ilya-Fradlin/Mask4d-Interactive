@@ -28,7 +28,9 @@ class ObjectSegmentation(pl.LightningModule):
         super().__init__()
         self.config = config
         # model
-        self.interactive4d = Interactive4D(num_heads=8, num_decoders=3, num_levels=1, hidden_dim=128, dim_feedforward=1024, shared_decoder=False, num_bg_queries=10, dropout=0.0, pre_norm=False, aux=True, voxel_size=config.data.voxel_size, sample_sizes=[4000, 8000, 16000, 32000])
+        self.interactive4d = Interactive4D(
+            num_heads=8, num_decoders=3, num_levels=1, hidden_dim=128, dim_feedforward=1024, shared_decoder=False, num_bg_queries=10, dropout=0.0, pre_norm=False, aux=True, voxel_size=config.data.voxel_size, sample_sizes=[4000, 8000, 16000, 32000], use_objid_attention=config.general.use_objid_attention
+        )
         self.optional_freeze = nullcontext
         self.dataset_type = self.config.general.dataset
 
@@ -292,6 +294,12 @@ class ObjectSegmentation(pl.LightningModule):
 
         pred = 0
 
+        # Update NoC@target for all the targets that have not been reached:
+        for idx in range(batch_size):
+            while next_iou_target_indices[idx] != len(iou_targets) - 1:
+                self.numClicks_for_IoU.update(iou=iou_targets[next_iou_target_indices[idx]], noc=max_num_clicks)
+                next_iou_target_indices[idx] += 1
+
         if (batch_idx % self.config.general.visualization_frequency == 0) or (general_miou < 0.4):  # Condition for visualization logging
             # choose a random scene to visualize from the batch
             chosen_scene_idx = random.randint(0, batch_size - 1)
@@ -392,7 +400,7 @@ class ObjectSegmentation(pl.LightningModule):
         # Optimizer:
         # self.config.optimizer.lr = self.config.optimizer.lr * math.sqrt(self.config.trainer.num_nodes)
         self.config.optimizer.lr = self.config.optimizer.lr * self.config.trainer.num_nodes
-        optimizer = AdamW(params=self.parameters(), lr=self.config.optimizer.lr)
+        optimizer = CustomAdamW(params=self.parameters(), lr=self.config.optimizer.lr)
 
         # Scehduler:
         steps_per_epoch = math.ceil(len(self.train_dataloader()) / (self.config.trainer.num_devices * self.config.trainer.num_nodes))

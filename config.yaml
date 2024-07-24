@@ -6,14 +6,15 @@ general:
   dataset: semantickitti # semantickitti / nuScenes
   workspace: Ilyafr97
   dbscan_eps: null
-  experiment_name: now-batch_size_4_things_augmentation # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
+  experiment_name: now-agile3d # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
   save_dir: saved/${general.experiment_name}
   visualization_dir: saved/${general.experiment_name}/pointclouds
   # Frequently Adjusted Parameters
   visualization_frequency: 500
   ckpt_path: null # i.e. /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt
-  max_num_clicks: 5
-  clicks_of_interest: [1, 2, 3, 4, 5] # another possibility [1, 3, 5, 10, 15, 20]
+  max_num_clicks: 10
+  use_objid_attention: false
+  clicks_of_interest: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] # another possibility [1, 3, 5, 10, 15, 20]
   iou_targets: [0.5, 0.65, 0.80, 0.85, 0.90]
 
 trainer:
@@ -44,8 +45,8 @@ data:
 
   dataloader:
     pin_memory: true
-    num_workers: 4
-    batch_size: 4
+    num_workers: 1 # 4
+    batch_size: 1 # 4
     test_batch_size: 1
     voxel_size: 0.05
 
@@ -56,4 +57,4 @@ loss:
   aux: true
   bce_loss_coef: 1.0
   dice_loss_coef: 2.0
-  bbox_loss_coef: 2.0
+  bbox_loss_coef: 0.0

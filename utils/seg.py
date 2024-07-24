@@ -537,10 +537,12 @@ def get_next_simulated_click_multi_bbox(error_cluster_ids, error_cluster_ids_mas
 
 def decode_cluster_ids(cluster_ids, prime1=9973, prime2=11):
     # Recover pred_label using modular arithmetic
-    pred_label = (cluster_ids % prime1) // prime2
+    # pred_label = (cluster_ids % prime1) // prime2
+    pred_label = torch.div(cluster_ids % prime1, prime2, rounding_mode="trunc")
 
     # Recover labels_qv by isolating it
-    labels_qv = (cluster_ids - pred_label * prime2) // prime1
+    # labels_qv = (cluster_ids - pred_label * prime2) // prime1
+    labels_qv = torch.div(cluster_ids - pred_label * prime2, prime1, rounding_mode="trunc")
 
     return labels_qv, pred_label
 
