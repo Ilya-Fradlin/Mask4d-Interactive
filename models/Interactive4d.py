@@ -207,9 +207,9 @@ class Interactive4D(nn.Module):
                 obj_id_list.extend([current_obj_id] * count)
                 current_obj_id += 1
             obj_id_tensor = torch.tensor(obj_id_list, dtype=torch.long).to(fg_query_pos.device)
-            fg_query_obj = self.object_embedding(obj_id_tensor).T.unsqueeze(0)
 
             if self.use_objid_attention:
+                fg_query_obj = self.object_embedding(obj_id_tensor).T.unsqueeze(0)
                 fg_query_pos = fg_query_pos + fg_query_time + fg_query_obj
             else:
                 fg_query_pos = fg_query_pos + fg_query_time

@@ -274,10 +274,10 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
     # Do not generate new clicks for obj that has been clicked more than the threshold
     if current_click_idx is not None:
         for obj_id, click_ids in current_click_idx.items():
-            if obj_id != "0":  # background can receive as many clicks as needed
-                if len(click_ids) >= 20:  # TODO: inject this as a click_threshold parameter
-                    # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
-                    pred_label[labels_qv == int(obj_id)] = int(obj_id)
+            # if obj_id != "0":  # background can receive as many clicks as needed
+            if len(click_ids) >= 40:  # TODO: inject this as a click_threshold parameter
+                # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
+                pred_label[labels_qv == int(obj_id)] = int(obj_id)
 
     error_mask = torch.abs(pred_label - labels_qv) > 0
 
@@ -349,7 +349,7 @@ def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_cl
     if current_click_idx is not None:
         for obj_id, click_ids in current_click_idx.items():
             if obj_id != "0":  # background can receive as many clicks as needed
-                if len(click_ids) >= 20:  # TODO: inject this as a click_threshold parameter
+                if len(click_ids) >= 40:  # TODO: inject this as a click_threshold parameter
                     # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
                     pred_label[labels_qv == int(obj_id)] = int(obj_id)
 

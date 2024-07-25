@@ -159,6 +159,8 @@ def main(running_on_julich=False):
 
     if running_on_julich:
         cfg.data.datasets.data_dir = "/p/scratch/objectsegvideo/ilya/code/preprocessing"
+        cfg.trainer.num_devices = 4
+        cfg.trainer.num_nodes = 4
 
     cfg.general.experiment_name = cfg.general.experiment_name.replace("now", datetime.now().strftime("%Y-%m-%d_%H%M%S"))
     resolved_cfg = OmegaConf.to_container(cfg, resolve=True)

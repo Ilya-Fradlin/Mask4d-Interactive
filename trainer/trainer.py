@@ -194,7 +194,8 @@ class ObjectSegmentation(pl.LightningModule):
 
         # TODO: check how is the max_num_clicks update more than 1 batch size
         iou_targets = self.config.general.iou_targets
-        iou_targets.append(9999)  # serving as a stop condition
+        if iou_targets[-1] != 9999:
+            iou_targets.append(9999)  # serving as a stop condition
         max_num_clicks = num_obj[0] * self.config.general.max_num_clicks
         next_iou_target_indices = {idx: 0 for idx in range(batch_size)}
         while current_num_clicks <= max_num_clicks:
@@ -582,54 +583,3 @@ class CustomAdamW(AdamW):
                 if "step" in state and state["step"].is_cuda:
                     state["step"] = state["step"].cpu()
         super().step(closure)
-
-
-def save_tensor_as_pcd(tensor):
-    """
-    Saves a 3D point cloud tensor to a .pcd file.
-
-    Parameters:
-    - tensor (torch.Tensor): The input tensor of shape [N, 3] representing the point cloud.
-    """
-    import open3d as o3d
-
-    filename = "output.pcd"
-    if not isinstance(tensor, torch.Tensor):
-        raise TypeError("Input must be a torch.Tensor")
-    if tensor.shape[1] != 3:
-        raise ValueError("Tensor must have shape [N, 3]")
-
-    # Convert the tensor to a NumPy array
-    points = tensor.cpu().numpy()
-
-    # Create an Open3D PointCloud object
-    point_cloud = o3d.geometry.PointCloud()
-    point_cloud.points = o3d.utility.Vector3dVector(points)
-
-    # Save the point cloud to a .pcd file
-    o3d.io.write_point_cloud(filename, point_cloud)
-    print(f"Point cloud saved to {filename}")
-
-
-def gather_point_cloud_info(coords):
-    # Calculate max and min along each axis
-    max_vals = torch.max(coords, dim=0).values
-    min_vals = torch.min(coords, dim=0).values
-
-    # Calculate the size of the scene
-    scene_size = max_vals - min_vals
-
-    # Calculate the mean and standard deviation along each axis
-    mean_vals = torch.mean(coords, dim=0)
-    std_vals = torch.std(coords, dim=0)
-
-    # Calculate the number of points
-    num_points = coords.shape[0]
-
-    # Print the gathered information
-    print(f"Number of points: {num_points}")
-    print(f"Max values along each axis: {max_vals}")
-    print(f"Min values along each axis: {min_vals}")
-    print(f"Size of the scene: {scene_size}")
-    print(f"Mean values along each axis: {mean_vals}")
-    print(f"Standard deviation along each axis: {std_vals}")
