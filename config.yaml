@@ -6,7 +6,7 @@ general:
   dataset: semantickitti # semantickitti / nuScenes
   workspace: Ilyafr97
   dbscan_eps: null
-  experiment_name: now-agile3d # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
+  experiment_name: now-agile3d_singleObj # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
   save_dir: saved/${general.experiment_name}
   visualization_dir: saved/${general.experiment_name}/pointclouds
   # Frequently Adjusted Parameters
@@ -34,19 +34,19 @@ data:
   datasets:
     data_dir: /globalwork/fradlin/mask4d-interactive/processed/semantic_kitti # /p/scratch/objectsegvideo/ilya/code/Mask4d-Interactive/datasets/preprocessing
     sample_choice_train: full # full / subsampled / short
-    sample_choice_validation: short # full / subsampled / short
+    sample_choice_validation: full # full / subsampled / short
     obj_type: all # things, stuff, all
     add_distance: true
     sweep: 1
-    segment_full_scene: true
+    segment_full_scene: false
     instance_population: 0
     center_coordinates: true
     volume_augmentations_path: conf/augmentation/volumentations_aug.yaml
 
   dataloader:
     pin_memory: true
-    num_workers: 1 # 4
-    batch_size: 1 # 4
+    num_workers: 4 # 4
+    batch_size: 4 # 4
     test_batch_size: 1
     voxel_size: 0.05
 

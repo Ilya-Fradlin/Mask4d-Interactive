@@ -261,15 +261,13 @@ class ObjectSegmentation(pl.LightningModule):
                     objects_info = get_objects_iou(pred, labels)
                 else:
                     objects_info = get_objects_iou(updated_pred, labels)
-                new_clicks, new_clicks_num, new_click_pos, new_click_time, cluster_dict = get_iou_based_simulated_clicks(
+                new_clicks, new_clicks_num, new_click_pos, new_click_time = get_simulated_clicks(
                     sample_pred,
                     sample_labels,
                     sample_raw_coords,
                     current_num_clicks,
-                    objects_info=objects_info[idx],
                     current_click_idx=click_idx[idx],
                     training=False,
-                    cluster_dict=cluster_dict,
                 )
 
                 ### add new clicks ###
@@ -378,11 +376,11 @@ class ObjectSegmentation(pl.LightningModule):
                 "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
                 "validation/Interactive_metrics/IoU_4": stats["IoU@4"],
                 "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@6"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@7"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@8"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@9"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@10"],
+                "validation/Interactive_metrics/IoU_6": stats["IoU@6"],
+                "validation/Interactive_metrics/IoU_7": stats["IoU@7"],
+                "validation/Interactive_metrics/IoU_8": stats["IoU@8"],
+                "validation/Interactive_metrics/IoU_9": stats["IoU@9"],
+                "validation/Interactive_metrics/IoU_10": stats["IoU@10"],
             }
         )
         # self.validation_step_outputs.clear()  # free memory
@@ -524,15 +522,13 @@ class ObjectSegmentation(pl.LightningModule):
 
                     objects_info = get_objects_iou(pred, labels)
 
-                    new_clicks, new_clicks_num, new_click_pos, new_click_time, cluster_dict = get_iou_based_simulated_clicks(
+                    new_clicks, new_clicks_num, new_click_pos, new_click_time = get_simulated_clicks(
                         sample_pred,
                         sample_labels,
                         sample_raw_coords,
                         current_num_iter,
-                        objects_info=objects_info[idx],
                         current_click_idx=click_idx[idx],
                         training=True,
-                        cluster_dict=cluster_dict,
                     )
 
                     ### add new clicks ###

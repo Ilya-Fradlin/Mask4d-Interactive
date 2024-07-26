@@ -272,12 +272,12 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
     pred_label = pred_qv.float()
 
     # Do not generate new clicks for obj that has been clicked more than the threshold
-    if current_click_idx is not None:
-        for obj_id, click_ids in current_click_idx.items():
-            # if obj_id != "0":  # background can receive as many clicks as needed
-            if len(click_ids) >= 40:  # TODO: inject this as a click_threshold parameter
-                # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
-                pred_label[labels_qv == int(obj_id)] = int(obj_id)
+    # if current_click_idx is not None:
+    #     for obj_id, click_ids in current_click_idx.items():
+    #         if obj_id != "0":  # background can receive as many clicks as needed
+    #             if len(click_ids) >= 20:  # TODO: inject this as a click_threshold parameter
+    #                 # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
+    #                 pred_label[labels_qv == int(obj_id)] = int(obj_id)
 
     error_mask = torch.abs(pred_label - labels_qv) > 0
 
@@ -306,18 +306,18 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
         error = error_cluster_ids_mask == cluster_id
 
         #### Original implementation
-        # pairwise_distances = measure_error_size(coords_qv, error)
-        # error_distances[int(cluster_id)] = pairwise_distances
-        # error_sizes[int(cluster_id)] = torch.max(pairwise_distances).tolist()
+        pairwise_distances = measure_error_size(coords_qv, error)
+        error_distances[int(cluster_id)] = pairwise_distances
+        error_sizes[int(cluster_id)] = torch.max(pairwise_distances).tolist()
 
         #### Compute the AABB (Axis-Aligned Bounding Box) for the wrongly classified points
-        clusters_error_distance, furthest_point, furthest_point_index = find_closest_point_to_centroid(coords_qv, error)
-        original_indices = torch.nonzero(error).squeeze()  # Find the index of the furthest point in the original coords_qv
-        if original_indices.dim() == 0:  # There is only one point in the error region
-            furthest_point_original_index = original_indices.item()
-        else:
-            furthest_point_original_index = original_indices[furthest_point_index]
-        error_sizes[int(cluster_id)], center_ids[int(cluster_id)], center_coos[int(cluster_id)], center_gts[int(cluster_id)] = clusters_error_distance, furthest_point_original_index, furthest_point, labels_qv[furthest_point_original_index]
+        # clusters_error_distance, furthest_point, furthest_point_index = find_closest_point_to_centroid(coords_qv, error)
+        # original_indices = torch.nonzero(error).squeeze()  # Find the index of the furthest point in the original coords_qv
+        # if original_indices.dim() == 0:  # There is only one point in the error region
+        #     furthest_point_original_index = original_indices.item()
+        # else:
+        #     furthest_point_original_index = original_indices[furthest_point_index]
+        # error_sizes[int(cluster_id)], center_ids[int(cluster_id)], center_coos[int(cluster_id)], center_gts[int(cluster_id)] = clusters_error_distance, furthest_point_original_index, furthest_point, labels_qv[furthest_point_original_index]
 
         #### Compute the OBB (Oriented bounding box) for the wrongly classified points
         # error_points = coords_qv[error]
@@ -336,8 +336,8 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
         else:
             selected_error_cluster_ids = error_cluster_ids_sorted[:1]
 
-    # new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi(selected_error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances)
-    new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi_bbox(selected_error_cluster_ids, error_cluster_ids_mask, center_ids, center_coos, center_gts)
+    new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi(selected_error_cluster_ids, error_cluster_ids_mask, pred_qv, labels_qv, coords_qv, error_distances)
+    # new_clicks, new_click_num, new_click_pos, new_click_time = get_next_simulated_click_multi_bbox(selected_error_cluster_ids, error_cluster_ids_mask, center_ids, center_coos, center_gts)
     return new_clicks, new_click_num, new_click_pos, new_click_time
 
 

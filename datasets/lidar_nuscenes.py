@@ -189,10 +189,13 @@ class LidarDatasetNuscenes(Dataset):
                 # we need to keep only the things or only the stuff
                 scan["clicks"], scan["obj"] = self.select_only_desired_objects_subsampled(self.obj_type, scan["obj"], scan["clicks"])
             obj_labels = np.zeros(panoptic_labels.shape)
-            for obj_idx, label in scan["obj"].items():
-                obj_labels[panoptic_labels == label] = int(obj_idx)
-                obj2label_map[str(int(obj_idx))] = int(label)
-            click_idx = scan["clicks"]
+            randomly_selected_panoptic_label = scan["obj"][choice(list(scan["obj"].keys()))]
+
+            # for obj_idx, label in selected_obj:
+            obj_labels[panoptic_labels == randomly_selected_panoptic_label] = 1
+            obj2label_map["1"] = int(randomly_selected_panoptic_label)
+
+            click_idx = {"1": [], "0": []}
 
         elif "validation" in self.mode and self.segment_full_scene:
             # no pre-defined object selected, choose random objects
@@ -208,7 +211,8 @@ class LidarDatasetNuscenes(Dataset):
             if self.segment_full_scene:
                 num_obj = max_num_obj
             else:
-                num_obj = np.random.randint(1, min(10, max_num_obj) + 1)
+                # num_obj = np.random.randint(1, min(10, max_num_obj) + 1)
+                num_obj = 1
             chosen_objects = random_sample(unique_panoptic_labels, num_obj)
 
             if label2obj_map == {}:
