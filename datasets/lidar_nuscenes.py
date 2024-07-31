@@ -36,7 +36,10 @@ class LidarDatasetNuscenes(Dataset):
         self.obj_type = obj_type
         self.center_coordinates = center_coordinates
         self.dataset_type = dataset_type
-
+        if sweep > 1:
+            self.drop_outliers = True
+        else:
+            self.drop_outliers = False
         # loading database file
         database_path = Path(self.data_dir)
         database_file = database_path.joinpath(f"nuscenes_validation_list.json")
@@ -104,25 +107,32 @@ class LidarDatasetNuscenes(Dataset):
             # rotate and translate
             pose = np.array(scan["pose"]).T
             coordinates = coordinates @ pose[:3, :3] + pose[3, :3]
-            coordinates_list.append(coordinates)
             acc_num_points.append(acc_num_points[-1] + len(coordinates))
 
             # features
             # features = points[:, 3:4]  # intensity
             time_array = np.ones((features.shape[0], 1)) * time
             features = np.hstack((time_array, features))  # (time, intensity)
-            features_list.append(features)
 
             # labels
             if "test" in self.mode:
                 labels = np.zeros_like(features).astype(np.int64)
-                labels_list.append(labels)
                 obj2label_maps_list.append({})
             else:
                 # Convert the panoptic labels into object labels
                 labels, obj2label_map, click_idx, max_instance_id, label2obj_map = self.generate_object_labels(scan, max_instance_id, label2obj_map, obj2label_map, click_idx)
-                labels_list.append(labels)
                 obj2label_maps_list.append(obj2label_map)
+
+            if self.drop_outliers:
+                # Create a boolean mask where labels are not 0
+                mask = labels != 0
+                # Apply the mask to each array
+                labels = labels[mask]
+                coordinates = coordinates[mask]
+                features = features[mask]
+            coordinates_list.append(coordinates)
+            features_list.append(features)
+            labels_list.append(labels)
 
         coordinates = np.vstack(coordinates_list)
         if self.center_coordinates:

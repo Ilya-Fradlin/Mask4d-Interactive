@@ -270,6 +270,7 @@ class ObjectSegmentation(pl.LightningModule):
                     current_click_idx=click_idx[idx],
                     training=False,
                     cluster_dict=cluster_dict,
+                    max_clicks_per_obj=self.config.general.max_clicks_per_obj,
                 )
 
                 ### add new clicks ###
@@ -298,7 +299,7 @@ class ObjectSegmentation(pl.LightningModule):
         # Update NoC@target for all the targets that have not been reached:
         for idx in range(batch_size):
             while next_iou_target_indices[idx] != len(iou_targets) - 1:
-                self.numClicks_for_IoU.update(iou=iou_targets[next_iou_target_indices[idx]], noc=max_num_clicks)
+                self.numClicks_for_IoU.update(iou=iou_targets[next_iou_target_indices[idx]], noc=self.config.general.max_num_clicks)
                 next_iou_target_indices[idx] += 1
 
         if (batch_idx % self.config.general.visualization_frequency == 0) or (general_miou < 0.4):  # Condition for visualization logging
@@ -356,35 +357,61 @@ class ObjectSegmentation(pl.LightningModule):
         print(results_dict)
         stats = {k: meter.global_avg for k, meter in self.validation_metric_logger.meters.items()}
         stats.update(results_dict)
-        self.log_dict(
-            {
-                "validation/epoch": self.current_epoch,
-                "validation/loss_epoch": stats["loss"],
-                "validation/loss_bce_epoch": stats["loss_bce"],
-                "validation/loss_dice_epoch": stats["loss_dice"],
-                "validation/mIoU_quantized_epoch": stats["mIoU_quantized"],
-                "validation/Interactive_metrics/NoC_50": stats["NoC@50"],
-                "validation/Interactive_metrics/scenes_reached_50_iou": stats["scenes_reached_50_iou"],
-                "validation/Interactive_metrics/NoC_65": stats["NoC@65"],
-                "validation/Interactive_metrics/scenes_reached_65_iou": stats["scenes_reached_65_iou"],
-                "validation/Interactive_metrics/NoC_80": stats["NoC@80"],
-                "validation/Interactive_metrics/scenes_reached_80_iou": stats["scenes_reached_80_iou"],
-                "validation/Interactive_metrics/NoC_85": stats["NoC@85"],
-                "validation/Interactive_metrics/scenes_reached_85_iou": stats["scenes_reached_85_iou"],
-                "validation/Interactive_metrics/NoC_90": stats["NoC@90"],
-                "validation/Interactive_metrics/scenes_reached_90_iou": stats["scenes_reached_90_iou"],
-                "validation/Interactive_metrics/IoU_1": stats["IoU@1"],
-                "validation/Interactive_metrics/IoU_2": stats["IoU@2"],
-                "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
-                "validation/Interactive_metrics/IoU_4": stats["IoU@4"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@6"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@7"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@8"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@9"],
-                "validation/Interactive_metrics/IoU_5": stats["IoU@10"],
-            }
-        )
+        if "IoU@6" in stats.keys():
+            self.log_dict(
+                {
+                    "validation/epoch": self.current_epoch,
+                    "validation/loss_epoch": stats["loss"],
+                    "validation/loss_bce_epoch": stats["loss_bce"],
+                    "validation/loss_dice_epoch": stats["loss_dice"],
+                    "validation/mIoU_quantized_epoch": stats["mIoU_quantized"],
+                    "validation/Interactive_metrics/NoC_50": stats["NoC@50"],
+                    "validation/Interactive_metrics/scenes_reached_50_iou": stats["scenes_reached_50_iou"],
+                    "validation/Interactive_metrics/NoC_65": stats["NoC@65"],
+                    "validation/Interactive_metrics/scenes_reached_65_iou": stats["scenes_reached_65_iou"],
+                    "validation/Interactive_metrics/NoC_80": stats["NoC@80"],
+                    "validation/Interactive_metrics/scenes_reached_80_iou": stats["scenes_reached_80_iou"],
+                    "validation/Interactive_metrics/NoC_85": stats["NoC@85"],
+                    "validation/Interactive_metrics/scenes_reached_85_iou": stats["scenes_reached_85_iou"],
+                    "validation/Interactive_metrics/NoC_90": stats["NoC@90"],
+                    "validation/Interactive_metrics/scenes_reached_90_iou": stats["scenes_reached_90_iou"],
+                    "validation/Interactive_metrics/IoU_1": stats["IoU@1"],
+                    "validation/Interactive_metrics/IoU_2": stats["IoU@2"],
+                    "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
+                    "validation/Interactive_metrics/IoU_4": stats["IoU@4"],
+                    "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
+                    "validation/Interactive_metrics/IoU_5": stats["IoU@6"],
+                    "validation/Interactive_metrics/IoU_5": stats["IoU@7"],
+                    "validation/Interactive_metrics/IoU_5": stats["IoU@8"],
+                    "validation/Interactive_metrics/IoU_5": stats["IoU@9"],
+                    "validation/Interactive_metrics/IoU_5": stats["IoU@10"],
+                }
+            )
+        else:
+            self.log_dict(
+                {
+                    "validation/epoch": self.current_epoch,
+                    "validation/loss_epoch": stats["loss"],
+                    "validation/loss_bce_epoch": stats["loss_bce"],
+                    "validation/loss_dice_epoch": stats["loss_dice"],
+                    "validation/mIoU_quantized_epoch": stats["mIoU_quantized"],
+                    "validation/Interactive_metrics/NoC_50": stats["NoC@50"],
+                    "validation/Interactive_metrics/scenes_reached_50_iou": stats["scenes_reached_50_iou"],
+                    "validation/Interactive_metrics/NoC_65": stats["NoC@65"],
+                    "validation/Interactive_metrics/scenes_reached_65_iou": stats["scenes_reached_65_iou"],
+                    "validation/Interactive_metrics/NoC_80": stats["NoC@80"],
+                    "validation/Interactive_metrics/scenes_reached_80_iou": stats["scenes_reached_80_iou"],
+                    "validation/Interactive_metrics/NoC_85": stats["NoC@85"],
+                    "validation/Interactive_metrics/scenes_reached_85_iou": stats["scenes_reached_85_iou"],
+                    "validation/Interactive_metrics/NoC_90": stats["NoC@90"],
+                    "validation/Interactive_metrics/scenes_reached_90_iou": stats["scenes_reached_90_iou"],
+                    "validation/Interactive_metrics/IoU_1": stats["IoU@1"],
+                    "validation/Interactive_metrics/IoU_2": stats["IoU@2"],
+                    "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
+                    "validation/Interactive_metrics/IoU_4": stats["IoU@4"],
+                    "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
+                }
+            )
         # self.validation_step_outputs.clear()  # free memory
         self.validation_metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
 
@@ -533,6 +560,7 @@ class ObjectSegmentation(pl.LightningModule):
                         current_click_idx=click_idx[idx],
                         training=True,
                         cluster_dict=cluster_dict,
+                        max_clicks_per_obj=self.config.general.max_clicks_per_obj,
                     )
 
                     ### add new clicks ###

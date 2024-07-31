@@ -38,7 +38,7 @@ class Interactive4D(nn.Module):
         backbone_cfg.dilations = [1, 1, 1, 1]
         backbone_cfg.conv1_kernel_size = 5
         backbone_cfg.bn_momentum = 0.02
-        self.backbone = Res16UNet34C(in_channels=2, out_channels=19, config=backbone_cfg)
+        self.backbone = Res16UNet34C(in_channels=3, out_channels=19, config=backbone_cfg)
         self.num_heads = num_heads
         self.num_decoders = num_decoders
         self.num_levels = num_levels

@@ -145,6 +145,10 @@ def mean_iou_scene(pred, labels):
 
 def loss_weights(points, clicks, tita, alpha, beta):
     """Points closer to clicks have bigger weights. Vice versa."""
+    tita = 2
+    beta = 2
+    alpha = 0.5
+
     pairwise_distances = torch.cdist(points, clicks)
     pairwise_distances, _ = torch.min(pairwise_distances, dim=1)
 
@@ -264,7 +268,7 @@ def measure_error_size(discrete_coords, unique_labels):
     return pairwise_distances
 
 
-def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None, current_click_idx=None, training=True):
+def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None, current_click_idx=None, training=True, max_clicks_per_obj=20):
     """Sample simulated clicks.
     The simulation samples next clicks from the top biggest error regions in the current iteration.
     """
@@ -275,7 +279,7 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
     if current_click_idx is not None:
         for obj_id, click_ids in current_click_idx.items():
             # if obj_id != "0":  # background can receive as many clicks as needed
-            if len(click_ids) >= 40:  # TODO: inject this as a click_threshold parameter
+            if len(click_ids) >= max_clicks_per_obj:
                 # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
                 pred_label[labels_qv == int(obj_id)] = int(obj_id)
 
@@ -341,17 +345,17 @@ def get_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None,
     return new_clicks, new_click_num, new_click_pos, new_click_time
 
 
-def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None, current_click_idx=None, training=True, objects_info={}, cluster_dict={}):
+def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_clicks=None, current_click_idx=None, training=True, objects_info={}, cluster_dict={}, max_clicks_per_obj=20):
     labels_qv = labels_qv.float()
     pred_label = pred_qv.float()
 
     # Do not generate new clicks for obj that has been clicked more than the threshold
     if current_click_idx is not None:
         for obj_id, click_ids in current_click_idx.items():
-            if obj_id != "0":  # background can receive as many clicks as needed
-                if len(click_ids) >= 40:  # TODO: inject this as a click_threshold parameter
-                    # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
-                    pred_label[labels_qv == int(obj_id)] = int(obj_id)
+            # if obj_id != "0":  # background can receive as many clicks as needed
+            if len(click_ids) >= max_clicks_per_obj:
+                # Artificially set the pred_label to labels_qv for this object (as it received the threshold number of clicks)
+                pred_label[labels_qv == int(obj_id)] = int(obj_id)
 
     error_mask = torch.abs(pred_label - labels_qv) > 0
 
@@ -390,7 +394,7 @@ def get_iou_based_simulated_clicks(pred_qv, labels_qv, coords_qv, current_num_cl
         # error_sizes[int(cluster_id)] = torch.max(pairwise_distances).tolist()
 
         #### Compute the AABB (Axis-Aligned Bounding Box) for the wrongly classified points
-        if cluster_dict[int(cluster_id)] < 4:
+        if cluster_dict[int(cluster_id)] < 2:
             clusters_error_distance, furthest_point, furthest_point_index = find_closest_point_to_centroid(coords_qv, error)
         else:  # centroid click was selected already 3 times, now select the furthest point from the centroid
             clusters_error_distance, furthest_point, furthest_point_index = get_next_click_random(coords_qv, error)
