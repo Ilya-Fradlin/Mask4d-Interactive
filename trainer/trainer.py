@@ -13,7 +13,7 @@ from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 
 import utils.misc as utils
-from utils.utils import generate_wandb_objects3d
+from utils.utils import generate_wandb_objects3d, save_pcd
 from utils.seg import mean_iou, mean_iou_validation, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks, get_iou_based_simulated_clicks, get_objects_iou
 from datasets.utils import VoxelizeCollate
 from datasets.lidar import LidarDataset
@@ -140,6 +140,9 @@ class ObjectSegmentation(pl.LightningModule):
         self.losses_metric.update(losses)
         self.mIoU_metric.update(general_miou)
         self.mIoU_per_class_metric.update(label_miou_dict)
+
+        # save_pcd(raw_coords, labels=labels[0], output_path="ground_truth.pcd")
+        # save_pcd(raw_coords, labels=pred[], output_path="prediction.pcd")
 
         return losses
 

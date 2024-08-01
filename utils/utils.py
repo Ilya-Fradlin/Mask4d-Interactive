@@ -176,3 +176,28 @@ def generate_distinct_colors_kmeans(n):
     colors = kmeans.cluster_centers_.astype(int)
 
     return [tuple(color) for color in colors]
+
+
+def save_pcd(coordinates, labels=None, output_path="tmp.pcd"):
+    import open3d as o3d
+
+    pcd = o3d.geometry.PointCloud()
+    coordinates = np.array(coordinates.cpu())
+    pcd.points = o3d.utility.Vector3dVector(coordinates)
+    colors = labels_to_colors(labels)[:, :3] / 255
+    pcd.colors = o3d.utility.Vector3dVector(colors)
+    o3d.io.write_point_cloud(output_path, pcd)
+
+
+def labels_to_colors(labels):
+    import numpy as np
+
+    unique_labels = np.unique(labels.cpu())
+    num_colors = len(unique_labels)
+    # Generate distinct colors
+    colors_list = generate_distinct_colors_kmeans(num_colors)
+    # Create a mapping from labels to colors
+    label_to_color = {label: colors_list[i] for i, label in enumerate(unique_labels)}
+    # Apply the color map
+    colors = np.array([label_to_color[int(label.item())] for label in labels])
+    return colors
