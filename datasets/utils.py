@@ -141,6 +141,9 @@ def generate_collated_data(
     collated_data["num_points"] = num_points
     collated_data["sequences"] = sequences
     collated_data["click_idx"] = click_idx
+    collated_data["number_of_voxels"] = coordinates.shape[0]
+    collated_data["number_of_points"] = full_coordinates[0].shape[0]
+
     if mode == "validation":
         collated_data["full_coordinates"] = full_coordinates
 

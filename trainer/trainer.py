@@ -79,6 +79,10 @@ class ObjectSegmentation(pl.LightningModule):
         obj2label = [mapping[0] for mapping in target["obj2labels"]]
         batch_indicators = coords[:, 0]
         batch_size = batch_indicators.max() + 1
+        number_of_points = data["number_of_points"]
+        number_of_voxels = data["number_of_voxels"]
+        self.log("scene_size/number_of_points_training", number_of_points, on_step=True)
+        self.log("scene_size/number_of_voxels_training", number_of_voxels, prog_bar=True, on_step=True)
 
         click_idx, obj2label, labels, bboxs_target = self.verify_labels_post_quantization(labels, target["bboxs"], click_idx, obj2label, batch_size)
 
@@ -172,6 +176,12 @@ class ObjectSegmentation(pl.LightningModule):
         labels_full = [torch.from_numpy(l).to(coords) for l in target["labels_full"]]
         click_idx = data["click_idx"]
         inverse_maps = target["inverse_maps"]
+        number_of_points = data["number_of_points"]
+        number_of_voxels = data["number_of_voxels"]
+
+        self.log("scene_size/number_of_points_validation", number_of_points, on_step=True)
+        self.log("scene_size/number_of_voxels_validation", number_of_voxels, prog_bar=True, on_step=True)
+
         cluster_dict = {}
 
         obj2label = [mapping[0] for mapping in target["obj2labels"]]

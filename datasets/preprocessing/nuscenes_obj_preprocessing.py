@@ -45,37 +45,48 @@ class SemanticKittiPreprocessing:
         for mode in self.modes:
             self.databases[mode] = []
             for scene_name in tqdm(sorted(self.validation_scenes)):
+                scan = 0
                 scene_token = self.nusc.field2token("scene", "name", scene_name)[0]
                 scene_metadata = self.nusc.get("scene", scene_token)
 
                 # Get the first and last sample tokens from the scene metadata
                 # Then iterate through the samples using the first sample token and the 'next' field
-                first_sample_token = scene_metadata["first_sample_token"]
-                current_token = first_sample_token
+                first_token = scene_metadata["first_sample_token"]
+                current_sample = self.nusc.get("sample", first_token)
+                current_token = current_sample["data"]["LIDAR_TOP"]
                 while current_token != "":
-                    current_sample = self.nusc.get("sample", current_token)
-                    lidar_data = self.nusc.get("sample_data", current_sample["data"]["LIDAR_TOP"])
+                    lidar_data = self.nusc.get("sample_data", current_token)
+                    is_key_frame = lidar_data["is_key_frame"]
                     calibration_token = lidar_data["calibrated_sensor_token"]
                     calibrated_sensor = self.nusc.get("calibrated_sensor", calibration_token)
                     # calibration = parse_calibration(calibrated_sensor)
                     ego_pose_token = lidar_data["ego_pose_token"]
                     ego_pose = self.nusc.get("ego_pose", ego_pose_token)
                     pcd_path = os.path.join(self.data_dir, lidar_data["filename"])
-                    panoptic_data = self.nusc.get("panoptic", current_sample["data"]["LIDAR_TOP"])
-                    panoptic_labels_path = panoptic_data["filename"]
-                    label_path = os.path.join("/globalwork/datasets/nuScenes-v1.0/panoptic/nuScenes-panoptic-v1.0-all", panoptic_labels_path)
 
                     sample_dict = {}
+                    if is_key_frame:
+                        sample_token = lidar_data["sample_token"]
+                        current_sample = self.nusc.get("sample", sample_token)
+                        panoptic_data = self.nusc.get("panoptic", current_sample["data"]["LIDAR_TOP"])
+                        panoptic_labels_path = panoptic_data["filename"]
+                        label_path = os.path.join("/globalwork/datasets/nuScenes-v1.0/panoptic/nuScenes-panoptic-v1.0-all", panoptic_labels_path)
+                        sample_dict["label_filepath"] = label_path
+
                     sample_dict["sample_token"] = current_token
+                    sample_dict["scan_number"] = scan
                     sample_dict["filepath"] = pcd_path
-                    sample_dict["label_filepath"] = label_path
+                    sample_dict["is_key_frame"] = is_key_frame
                     sample_dict["unique_panoptic_labels"] = read_labels(label_path)[1]
-                    pose_matrix = transform_matrix(ego_pose["translation"], Quaternion(ego_pose["rotation"]), inverse=True)
                     sample_dict["pose"] = parse_poses(ego_pose, calibrated_sensor)
                     sample_dict["scene"] = scene_name.replace("-", "_")
+                    # pose_matrix = transform_matrix(ego_pose["translation"], Quaternion(ego_pose["rotation"]), inverse=True)
+                    # tmp = self.lidar_pose_alternative(lidar_data)
                     self.databases[mode].append(sample_dict)
 
-                    current_token = current_sample["next"]
+                    # current_token = current_sample["next"]
+                    scan += 1
+                    current_token = lidar_data["next"]
 
     def preprocess(self):
         # logger.info(f"starting preprocessing...")
@@ -98,23 +109,24 @@ class SemanticKittiPreprocessing:
         data_updated = []
         logger.info("starting validation subsampling...")
         for sample in tqdm(data):
-            # pick a random number between 1 and num_of_obj
-            max_num_obj = len(sample["unique_panoptic_labels"])
-            num_of_obj_to_validate = max_num_obj
-            # num_of_obj_to_validate = np.random.randint(1, min(10, max_num_obj) + 1)
+            if sample["is_key_frame"]:
+                # pick a random number between 1 and num_of_obj
+                max_num_obj = len(sample["unique_panoptic_labels"])
+                num_of_obj_to_validate = max_num_obj
+                # num_of_obj_to_validate = np.random.randint(1, min(10, max_num_obj) + 1)
 
-            ########### Pre-determine objects to be segmented in each validation scene ###########
-            chosen_objects = random.sample(sample["unique_panoptic_labels"], num_of_obj_to_validate)
-            clicks = {}
-            obj = {}
-            for obj_idx, label in enumerate(chosen_objects):
-                clicks[str(obj_idx + 1)] = []
-                obj[str(obj_idx + 1)] = label
+                ########### Pre-determine objects to be segmented in each validation scene ###########
+                chosen_objects = random.sample(sample["unique_panoptic_labels"], num_of_obj_to_validate)
+                clicks = {}
+                obj = {}
+                for obj_idx, label in enumerate(chosen_objects):
+                    clicks[str(obj_idx + 1)] = []
+                    obj[str(obj_idx + 1)] = label
 
-            clicks[str(0)] = []  # added click for background
+                clicks[str(0)] = []  # added click for background
 
-            sample["clicks"] = clicks
-            sample["obj"] = obj
+                sample["clicks"] = clicks
+                sample["obj"] = obj
 
             data_updated.append(sample)
 
@@ -143,7 +155,7 @@ class SemanticKittiPreprocessing:
             None
         """
         # train_json_file_name = "subsampled_train_list.json" if self.subsample_dataset else "full_train_list.json"
-        val_json_file_name = "nuscenes_validation_list.json"
+        val_json_file_name = "nuscenes_extended_validation_list.json"
 
         # Save data as JSON for each mode
         for mode in self.modes:
@@ -152,7 +164,7 @@ class SemanticKittiPreprocessing:
             for item in data:
                 # Construct the key based on the filepath
                 scene_id = item["scene"]
-                sample_token = item["sample_token"]
+                sample_token = item["scan_number"]
                 key = f"{scene_id}_{sample_token}"
                 json_data[key] = item
 
@@ -299,6 +311,25 @@ class SemanticKittiPreprocessing:
             # sample["number_of_objects"] = number_of_things + number_of_stuff
 
         return sample
+
+    def lidar_pose_alternative(self, lidar_sensor):
+        lidar_calibration = self.nusc.get("calibrated_sensor", lidar_sensor["calibrated_sensor_token"])
+        lidar2ego = self.calibration_to_transformation_matrix(lidar_calibration)
+
+        lidar_ego_pose_calibration = self.nusc.get("ego_pose", lidar_sensor["ego_pose_token"])
+        lidar_ego_pose = self.calibration_to_transformation_matrix(lidar_ego_pose_calibration)
+
+        lidar_pose = np.linalg.inv(lidar2ego) @ lidar_ego_pose @ lidar2ego
+
+        return lidar_pose.tolist()
+
+    def calibration_to_transformation_matrix(self, calibration, inverse=False):
+        transformation_matrix = np.eye(4)
+        transformation_matrix[:3, :3] = Quaternion(calibration["rotation"]).rotation_matrix
+        transformation_matrix[:3, 3] = calibration["translation"]
+        if inverse:
+            transformation_matrix = np.linalg.inv(transformation_matrix)
+        return transformation_matrix
 
 
 ###############################################################################
