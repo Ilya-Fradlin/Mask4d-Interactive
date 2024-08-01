@@ -39,6 +39,8 @@ def get_parameters(cfg: DictConfig):
         cfg.data.dataloader.voxel_size = 0.2
         cfg.data.dataloader.batch_size = 2
         cfg.data.dataloader.num_workers = 1
+        cfg.trainer.num_devices = 1
+        cfg.trainer.num_nodes = 1
         cfg.trainer.detect_anomaly = True
         cfg.trainer.num_sanity_val_steps = 1
         cfg.trainer.log_every_n_steps = 1

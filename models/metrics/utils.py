@@ -158,11 +158,14 @@ class MemoryUsageLogger(Callback):
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         self.log_memory_usage(pl_module, "train_batch_end")
 
-    def on_epoch_end(self, trainer, pl_module):
-        self.log_memory_usage(pl_module, "epoch_end")
+    def on_train_epoch_end(self, trainer, pl_module):
+        self.log_memory_usage(pl_module, "train_epoch_end")
 
-    def on_validation_end(self, trainer, pl_module):
-        self.log_memory_usage(pl_module, "validation_end")
+    def on_validation_epoch_end(self, trainer, pl_module):
+        self.log_memory_usage(pl_module, "validation_epoch_end")
+
+    def on_test_epoch_end(self, trainer, pl_module):
+        self.log_memory_usage(pl_module, "test_epoch_end")
 
     def log_memory_usage(self, pl_module, log_point):
         memory_info = psutil.virtual_memory()
