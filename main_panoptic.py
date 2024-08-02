@@ -171,9 +171,20 @@ def main(running_on_julich=False):
 
     parser = argparse.ArgumentParser(description="Override config parameters.")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--voxel_size", type=float, help="Specify the voxel size")
+    parser.add_argument("--num_sweeps", type=int, help="Specify the number of sweeps")
     args = parser.parse_args()
     if args.debug:
         cfg.general.experiment_name = "debugging-with-logging"
+    if args.voxel_size is not None:
+        cfg.data.dataloader.voxel_size = args.voxel_size
+        tmp = cfg.data.dataloader.voxel_size
+        print(f"voxel size has been changed to {tmp}!")
+    if args.num_sweeps is not None:
+        cfg.data.datasets.sweep = args.num_sweeps
+        # cfg.general.experiment_name += f"_{args.num_sweeps}sweeps"
+        tmp = cfg.data.datasets.sweep
+        print(f"sweep has been changed to {tmp}!")
 
     if cfg["general"]["mode"] == "train":
         train(cfg)
