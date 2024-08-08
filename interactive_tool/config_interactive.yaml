@@ -1,0 +1,61 @@
+general:
+  mode: "train"
+  gpus: null
+  seed: 42
+  project_name: Mask4D-Interactive
+  dataset: semantickitti # semantickitti / nuScenes
+  workspace: Ilyafr97
+  dbscan_eps: null
+  experiment_name: now-Interactive4d # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
+  save_dir: saved/${general.experiment_name}
+  visualization_dir: saved/${general.experiment_name}/pointclouds
+  # Frequently Adjusted Parameters
+  visualization_frequency: 500
+  ckpt_path: /home/fradlin/Github/Julich/Interactive4d_experiments/Interactive4d_sweeps/saved/2024-08-08_160433-Interactive4d_10cm/last.ckpt # i.e. /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt
+  max_num_clicks: 10
+  max_clicks_per_obj: 40
+  use_objid_attention: true
+  clicks_of_interest: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] # another possibility [1, 3, 5, 10, 15, 20]
+  iou_targets: [0.5, 0.65, 0.80, 0.85, 0.90]
+
+trainer:
+  num_devices: 4 # 1
+  num_nodes: 4 # 1
+  accelerator: auto
+  max_epochs: 30
+  check_val_every_n_epoch: 50
+  log_every_n_steps: 100
+  detect_anomaly: false
+  limit_train_batches: null
+  limit_val_batches: null
+  num_sanity_val_steps: 0
+
+data:
+  ignore_label: 255
+  datasets:
+    data_dir: /work/fradlin/Interactive_dataset/agile3d_data/interactive_dataset
+    sample_choice_train: full # full / subsampled / short
+    sample_choice_validation: short # full / subsampled / short
+    obj_type: all # things, stuff, all
+    add_distance: true
+    sweep: 1
+    segment_full_scene: true
+    instance_population: 0
+    center_coordinates: true
+    volume_augmentations_path: conf/augmentation/volumentations_aug.yaml
+
+  dataloader:
+    pin_memory: true
+    num_workers: 1 # 4
+    batch_size: 1 # 4
+    test_batch_size: 1
+    voxel_size: 0.05
+
+optimizer:
+  lr: 0.0002
+
+loss:
+  aux: true
+  bce_loss_coef: 1.0
+  dice_loss_coef: 2.0
+  bbox_loss_coef: 0.0
