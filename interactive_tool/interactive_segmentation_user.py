@@ -132,7 +132,7 @@ class UserInteractiveSegmentationModel(abc.ABC):
         self.cube_size = slider_value
 
     def run_segmentation(self):  # Overrides standard run
-        self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = self.dataloader_test.get_curr_scene()
+        self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects, features, gt_masks_colors = self.dataloader_test.get_curr_scene()
 
         self.record_file = record_file
         self.mask_folder = mask_folder
@@ -151,6 +151,7 @@ class UserInteractiveSegmentationModel(abc.ABC):
 
         self.coords_qv = coords_qv
         self.colors_qv = torch.from_numpy(colors_full[unique_map]).float()
+        self.features_qv = torch.from_numpy(features[unique_map]).float()
 
         if labels_full_ori is not None:
             self.labels_full_ori = torch.from_numpy(labels_full_ori).float().to(self.device)
@@ -163,7 +164,7 @@ class UserInteractiveSegmentationModel(abc.ABC):
         self.raw_coords_qv = torch.from_numpy(coords_full[unique_map]).float().to(self.device)
 
         ### compute backbone features
-        data = ME.SparseTensor(coordinates=ME.utils.batched_coordinates([self.coords_qv]), features=self.colors_qv, device=self.device)
+        data = ME.SparseTensor(coordinates=ME.utils.batched_coordinates([self.coords_qv]), features=self.features_qv, device=self.device)
         self.pcd_features, self.aux, self.coordinates, self.pos_encodings_pcd = self.model.forward_backbone(data, raw_coordinates=self.raw_coords_qv)
 
         ### show UI
@@ -174,7 +175,17 @@ class UserInteractiveSegmentationModel(abc.ABC):
         else:
             colors = self.get_colors()
         self.visualizer.run(
-            scene_name=self.scene_name, point_object=self.points, coords=self.coords, coords_qv=self.raw_coords_qv, colors=colors, original_colors=self.original_colors, original_labels=self.labels_full_ori, original_labels_qv=self.labels_qv_ori, is_point_cloud=self.scene_point_type == "pointcloud", object_names=objects
+            scene_name=self.scene_name,
+            point_object=self.points,
+            coords=self.coords,
+            coords_qv=self.raw_coords_qv,
+            colors=colors,
+            original_colors=self.original_colors,
+            original_labels=self.labels_full_ori,
+            original_labels_qv=self.labels_qv_ori,
+            is_point_cloud=self.scene_point_type == "pointcloud",
+            object_names=objects,
+            gt_masks_colors=gt_masks_colors,
         )
 
     def load_next_scene(self, quit=False, previous=False):
@@ -185,11 +196,11 @@ class UserInteractiveSegmentationModel(abc.ABC):
         prev, nxt, curr_scene_idx = self.check_previous_next_scene()
         if not previous and nxt:
             # load next scene
-            self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = next(self.dataloader_test)
+            self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects, features, gt_masks_colors = next(self.dataloader_test)
             self.reset_masks()
         elif previous and prev:
             # load previous scene
-            self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects = self.dataloader_test.load_scene(curr_scene_idx - 1)
+            self.scene_name, self.scene_point_type, self.points, labels_full_ori, record_file, mask_folder, click_folder, objects, features, gt_masks_colors = self.dataloader_test.load_scene(curr_scene_idx - 1)
             self.reset_masks()
         else:
             return
@@ -211,6 +222,7 @@ class UserInteractiveSegmentationModel(abc.ABC):
 
         self.coords_qv = coords_qv
         self.colors_qv = torch.from_numpy(colors_full[unique_map]).float()
+        self.features_qv = torch.from_numpy(features[unique_map]).float()
 
         if labels_full_ori is not None:
             self.labels_full_ori = torch.from_numpy(labels_full_ori).float().to(self.device)
@@ -223,7 +235,7 @@ class UserInteractiveSegmentationModel(abc.ABC):
         self.raw_coords_qv = torch.from_numpy(coords_full[unique_map]).float().to(self.device)
 
         ### compute backbone features
-        data = ME.SparseTensor(coordinates=ME.utils.batched_coordinates([self.coords_qv]), features=self.colors_qv, device=self.device)
+        data = ME.SparseTensor(coordinates=ME.utils.batched_coordinates([self.coords_qv]), features=self.features_qv, device=self.device)
         self.pcd_features, self.aux, self.coordinates, self.pos_encodings_pcd = self.model.forward_backbone(data, raw_coordinates=self.raw_coords_qv)
 
         if len(objects) != 0:  # init current object to the first one if there are already objects in the data set
@@ -234,7 +246,17 @@ class UserInteractiveSegmentationModel(abc.ABC):
             self.reset_masks()
             colors = self.get_colors()
         self.visualizer.set_new_scene(
-            scene_name=self.scene_name, point_object=self.points, coords=self.coords, coords_qv=self.raw_coords_qv, colors=colors, original_colors=self.original_colors, original_labels=self.labels_full_ori, original_labels_qv=self.labels_qv_ori, is_point_cloud=self.scene_point_type == "pointcloud", object_names=objects
+            scene_name=self.scene_name,
+            point_object=self.points,
+            coords=self.coords,
+            coords_qv=self.raw_coords_qv,
+            colors=colors,
+            original_colors=self.original_colors,
+            original_labels=self.labels_full_ori,
+            original_labels_qv=self.labels_qv_ori,
+            is_point_cloud=self.scene_point_type == "pointcloud",
+            object_names=objects,
+            gt_masks_colors=gt_masks_colors,
         )
         return
 

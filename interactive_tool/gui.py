@@ -185,7 +185,7 @@ class InteractiveSegmentationGUI:
 
     def __key_event(self, event):
         """Recognizes key events for shortcuts"""
-        print(f"key pressed: {event.key}")
+        # print(f"key pressed: {event.key}")
         if event.type == gui.KeyEvent.DOWN and key_mapper.get(event.key) != None:
             self.cur_obj_idx = key_mapper.get(event.key)
             return gui.Widget.EventCallbackResult.HANDLED
@@ -331,8 +331,9 @@ class InteractiveSegmentationGUI:
     def __toggle_colors_mode(self):
         """called when user presses 'o' in order to toggle between showing groundtruth and semantics colors"""
         if self.vis_mode_semantics:
-            # show groundtruth colors, disable clicking
-            colors = o3d.utility.Vector3dVector(self.original_colors)
+            # switch to groundtruth colors, disable clicking
+            # colors = o3d.utility.Vector3dVector(self.original_colors)
+            colors = o3d.utility.Vector3dVector(self.gt_masks_colors / 255)
         else:
             # show semantic colors
             colors = o3d.utility.Vector3dVector(self.new_colors)
@@ -421,10 +422,10 @@ class InteractiveSegmentationGUI:
     ########################################################################
     ################# Functions called by Interactive Model#################
     ########################################################################
-    def set_new_scene(self, scene_name, point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud=True, object_names=[]):
+    def set_new_scene(self, scene_name, point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud=True, object_names=[], gt_masks_colors=None):
         """called by Model to load next Scene"""
         self.curr_scene_name = scene_name
-        self.__init_points(point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud)
+        self.__init_points(point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud, gt_masks_colors)
         self.__set_up_camera()
         # delete previous settings and load new objects
 
@@ -473,7 +474,7 @@ class InteractiveSegmentationGUI:
         self.link = link
         gui.Application.instance.post_to_main_thread(self.window, self.__exit_dialogue)
 
-    def run(self, scene_name, point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud=True, object_names=[]):
+    def run(self, scene_name, point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud=True, object_names=[], gt_masks_colors=None):
         """first call by Model to load point cloud or mesh for the new object and set up camera view
         arg 'point_cloud_or_mesh' is True for point_cloud
         arg 'objects' can be used if already saved segmentations are reloaded"""
@@ -481,7 +482,7 @@ class InteractiveSegmentationGUI:
         self.curr_scene_name = scene_name
         self.info_coordinate_label.text = self.__get_info_lable_text()
         # save points and colors
-        self.__init_points(point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud)
+        self.__init_points(point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud, gt_masks_colors)
         self.widget3d.scene.add_geometry("Points", self.points, self.material_record)
         self.__set_up_camera()
         # add objects to GUI and load coloration for segmenting first object
@@ -493,13 +494,15 @@ class InteractiveSegmentationGUI:
         self.__set_prev_next_scene_buttons(*self.model.check_previous_next_scene())
         self.app.run()
 
-    def __init_points(self, point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud):
+    def __init_points(self, point_object, coords, coords_qv, colors, original_colors, original_labels, original_labels_qv, is_point_cloud, gt_masks_colors):
         self.vis_mode_semantics = True
         self.coordinates = coords
         self.coordinates_qv = coords_qv
         self.old_colors = colors.copy()
         self.new_colors = colors.copy()
         self.original_colors = original_colors
+        self.gt_masks_colors = gt_masks_colors
+
         self.original_labels = original_labels
         self.original_labels_qv = original_labels_qv
 

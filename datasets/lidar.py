@@ -111,18 +111,21 @@ class LidarDataset(Dataset):
         coordinates_list = []
         features_list = []
         labels_list = []
-        acc_num_points = [0]
+        acc_num_points = []
+        num_obj_in_scene = []
         obj2label_maps_list = []
+        file_paths = []
 
         # for debugging can specify idx = 1397 (for scene 1397)
         label2obj_map, obj2label_map, click_idx, max_instance_id = {}, {}, {}, 0
         for time, scan in enumerate(self.data[idx]):
+            file_paths.append(scan["filepath"])
             points = np.fromfile(scan["filepath"], dtype=np.float32).reshape(-1, 4)
             coordinates = points[:, :3]
             # rotate and translate
             pose = np.array(scan["pose"]).T
             coordinates = coordinates @ pose[:3, :3] + pose[3, :3]
-            acc_num_points.append(acc_num_points[-1] + len(coordinates))
+            acc_num_points.append(len(coordinates))
 
             # features
             features = points[:, 3:4]  # intensity
@@ -137,6 +140,9 @@ class LidarDataset(Dataset):
                 # Convert the panoptic labels into object labels
                 labels, obj2label_map, click_idx, max_instance_id, label2obj_map = self.generate_object_labels(scan, max_instance_id, label2obj_map, obj2label_map, click_idx)
                 obj2label_maps_list.append(obj2label_map)
+                unique_labels = np.unique(labels)
+                unique_labels = unique_labels[unique_labels != 0]
+                num_obj_in_scene.append(len(unique_labels))
 
             if self.drop_outliers:
                 # Create a boolean mask where labels are not 0
@@ -192,8 +198,9 @@ class LidarDataset(Dataset):
         # 11: 10, 12: 11, 13: 12, 14: 13, 15: 14, 16: 15, 17: 16, 18: 17, 19: 18}
 
         return {
-            "sequence": scan["filepath"],
+            "sequence": file_paths,
             "num_points": acc_num_points,
+            "num_obj": num_obj_in_scene,
             "coordinates": coordinates,
             "features": features,  # (coordinates, time, intensity, distance)
             "labels": labels,

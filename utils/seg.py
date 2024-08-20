@@ -617,3 +617,96 @@ def get_label_mapping(dataset_type):
         things_labels = []
         stuff_labels = []
     return label_mapping, things_labels
+
+
+def get_class_name(dataset_type, obj2label, b, obj_id, label_mapping):
+    if dataset_type == "semantickitti":
+        original_label = label_mapping[obj2label[b][obj_id] & 0xFFFF]
+    elif "nuScenes" in dataset_type:
+        original_label = label_mapping[obj2label[b][obj_id] // 1000]
+    return original_label
+
+
+def get_obj_ids_per_scan(labels_full, num_points_split):
+    obj_ids_per_scan = {}
+    for idx, sample_labels_full in enumerate(labels_full):
+        obj_ids_per_scan[idx] = {}
+        start_index = 0
+        for scan_index, split_size in enumerate(num_points_split[idx]):
+            end_index = start_index + split_size
+            scan_sample_labels_full = sample_labels_full[start_index:end_index]
+            obj_ids = torch.unique(scan_sample_labels_full)
+            obj_ids = obj_ids[obj_ids != 0]
+            obj_ids_per_scan[idx][scan_index] = np.asarray(obj_ids.cpu())
+            end_index = start_index
+    return obj_ids_per_scan
+
+
+def get_things_stuff_miou(dataset_type, class_IoU_weighted_results, label_mapping, clicks_of_interest):
+    # Define "Thing" and "Stuff" categories based on the challenge mapping
+    if dataset_type == "semantickitti":
+        ignore_labels = {"unlabeled"}
+        thing_labels = {"car", "bicycle", "motorcycle", "truck", "other-vehicle", "person", "bicyclist", "motorcyclist"}
+        stuff_labels = {"road", "parking", "sidewalk", "other-ground", "building", "fence", "vegetation", "trunk", "terrain", "pole", "traffic-sign"}
+    elif dataset_type == "nuScenes_challenge":
+        ignore_labels = {"void / ignore"}
+        thing_labels = {"barrier (thing)", "bicycle (thing)", "bus (thing)", "car (thing)", "construction_vehicle (thing)", "motorcycle (thing)", "pedestrian (thing)", "traffic_cone (thing)", "trailer (thing)", "truck (thing)"}
+        stuff_labels = {"driveable_surface (stuff)", "other_flat (stuff)", "sidewalk (stuff)", "terrain (stuff)", "manmade (stuff)", "vegetation (stuff)"}
+    elif dataset_type == "nuScenes_general":
+        ignore_labels = {"noise"}
+        thing_labels = {
+            "animal",
+            "human.pedestrian.adult",
+            "human.pedestrian.child",
+            "human.pedestrian.construction_worker",
+            "human.pedestrian.personal_mobility",
+            "human.pedestrian.police_officer",
+            "human.pedestrian.stroller",
+            "human.pedestrian.wheelchair",
+            "movable_object.barrier",
+            "movable_object.debris",
+            "movable_object.pushable_pullable",
+            "movable_object.trafficcone",
+            "static_object.bicycle_rack",
+            "vehicle.bicycle",
+            "vehicle.bus.bendy",
+            "vehicle.bus.rigid",
+            "vehicle.car",
+            "vehicle.construction",
+            "vehicle.emergency.ambulance",
+            "vehicle.emergency.police",
+            "vehicle.motorcycle",
+            "vehicle.trailer",
+            "vehicle.truck",
+        }
+        stuff_labels = {"flat.driveable_surface", "flat.other", "flat.sidewalk", "flat.terrain", "static.manmade", "static.other", "static.vegetation", "vehicle.ego"}
+
+    clickformer_IoU_score = {}
+    for click_of_interest in clicks_of_interest:
+        clickformer_IoU_score[f"clickformer_miou_things@{click_of_interest}"] = []
+        clickformer_IoU_score[f"clickformer_miou_stuff@{click_of_interest}"] = []
+
+    for class_type in label_mapping.values():
+        if class_type in ignore_labels:
+            continue
+        elif class_type in thing_labels:
+            is_thing = True
+        elif class_type in stuff_labels:
+            is_thing = False
+        else:
+            print("Issue in getting the mIoU for the class")
+        for click_of_interest in clicks_of_interest:
+            current_miou = class_IoU_weighted_results[class_type][f"IoU@{click_of_interest}"]
+            if current_miou is None:
+                continue
+            if is_thing:
+                clickformer_IoU_score[f"clickformer_miou_things@{click_of_interest}"].append(current_miou)
+            else:
+                clickformer_IoU_score[f"clickformer_miou_stuff@{click_of_interest}"].append(current_miou)
+
+    clickformer_IoU_score_summed = {}
+    for click_of_interest in clicks_of_interest:
+        clickformer_IoU_score_summed[f"validation/clickformer_metric/miou_things_{click_of_interest}"] = np.mean(clickformer_IoU_score[f"clickformer_miou_things@{click_of_interest}"])
+        clickformer_IoU_score_summed[f"validation/clickformer_metric/miou_stuff_{click_of_interest}"] = np.mean(clickformer_IoU_score[f"clickformer_miou_stuff@{click_of_interest}"])
+
+    return clickformer_IoU_score_summed

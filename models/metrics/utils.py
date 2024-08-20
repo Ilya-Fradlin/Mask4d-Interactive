@@ -68,6 +68,40 @@ class NumClicks_for_IoU(Metric):
         return metrics_dictionary, self.iou_thresholds
 
 
+class NumClicks_for_IoU_class(Metric):
+    full_state_update = True
+
+    def __init__(self, label_mapping, iou_thresholds=[0.50, 0.65, 0.80, 0.85, 0.90]):
+        super().__init__()
+        self.classes = label_mapping.values()
+        self.iou_thresholds = [int(100 * iou) for iou in iou_thresholds if iou <= 1]
+        for iou in self.iou_thresholds:
+            for class_type in self.classes:
+                self.add_state(f"{class_type}_noc_for_{iou}", default=torch.tensor(0.0), dist_reduce_fx="mean")
+                self.add_state(f"{class_type}_count_for_{iou}", default=torch.tensor(0.0), dist_reduce_fx="mean")
+
+    def update(self, iou, noc, class_type):
+        iou = int(100 * iou)
+        if iou in self.iou_thresholds:
+            self.__dict__[f"{class_type}_noc_for_{iou}"] += noc
+            self.__dict__[f"{class_type}_count_for_{iou}"] += 1
+        else:
+            print("iou not found")
+            raise ValueError
+
+    def compute(self):
+        metrics_dictionary = {}
+
+        for class_type in self.classes:
+            metrics_dictionary[class_type] = {}
+            for iou in self.iou_thresholds:
+                metrics_dictionary[class_type][iou] = {}
+                metrics_dictionary[class_type][iou]["noc"] = self.__dict__[f"{class_type}_noc_for_{iou}"]
+                metrics_dictionary[class_type][iou]["count"] = self.__dict__[f"{class_type}_count_for_{iou}"]
+
+        return metrics_dictionary, self.iou_thresholds
+
+
 class mIoU_metric(Metric):
     higher_is_better = True
     full_state_update = True

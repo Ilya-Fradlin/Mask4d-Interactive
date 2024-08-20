@@ -36,13 +36,13 @@ def get_parameters(cfg: DictConfig):
         os.environ["OMP_NUM_THREADS"] = "1"
         os.environ["MKL_NUM_THREADS"] = "1"
         # Add debugging options + No logging
-        cfg.data.dataloader.voxel_size = 0.2
+        cfg.data.dataloader.voxel_size = 0.1
         cfg.data.dataloader.num_workers = 1
         # cfg.data.dataloader.batch_size = 2
         cfg.trainer.num_devices = 1
         cfg.trainer.num_nodes = 1
         cfg.trainer.detect_anomaly = True
-        # cfg.trainer.num_sanity_val_steps = 1
+        cfg.trainer.num_sanity_val_steps = 2
         # cfg.trainer.log_every_n_steps = 1
         # cfg.trainer.max_epochs = 30
         # cfg.trainer.check_val_every_n_epoch = 5

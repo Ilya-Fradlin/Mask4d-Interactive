@@ -45,7 +45,7 @@ class InteractiveDataLoader:
 
     def get_curr_scene(self):
         """returns the scene_name, scene 3d points, list of object names"""
-        return self.scene_names[self.__index], self.point_type, self.scene_3dpoints, self.labels_full_ori, self.record_path, self.mask_folder, self.click_folder, [self.underscore_to_blank(name) for name in self.scene_object_names]
+        return self.scene_names[self.__index], self.point_type, self.scene_3dpoints, self.labels_full_ori, self.record_path, self.mask_folder, self.click_folder, [self.underscore_to_blank(name) for name in self.scene_object_names], self.scene_3dpoints_features, self.scene_3dpoints_gt_masks_colors
 
     def get_curr_scene_id(self):
         return self.__index
@@ -90,13 +90,22 @@ class InteractiveDataLoader:
             self.scene_3dpoints = o3d.io.read_triangle_mesh(scene_3dpoints_file)
             self.point_type = "mesh"
         elif pcd_type == o3d.io.FileGeometry.CONTAINS_POINTS:
-            self.scene_3dpoints = o3d.io.read_point_cloud(scene_3dpoints_file)
             self.point_type = "pointcloud"
+            self.scene_3dpoints = o3d.io.read_point_cloud(scene_3dpoints_file)
+            if "KITTI360" not in name:  # Later change to exclude KITTI360
+                # Setting all colors to black (0, 0, 0)
+                num_points = len(self.scene_3dpoints.points)  # Get the number of points in the point cloud
+                black_colors = np.zeros((num_points, 3))  # Create an array of zeros with shape (num_points, 3)
+                self.scene_3dpoints.colors = o3d.utility.Vector3dVector(black_colors)  # Assign the black colors to the point cloud
+            # Accessing and combining the color channels
+            self.scene_3dpoints_gt_masks_colors = np.stack((point_cloud["red"], point_cloud["green"], point_cloud["blue"]), axis=-1)
+            # Accessing and combining other features
+            self.scene_3dpoints_features = np.stack((point_cloud["time"], point_cloud["intensity"], point_cloud["distance"]), axis=-1)
         else:
             raise Exception(f"Data Format of 3d points in '3dpoints.ply' unknown for scene {name}")
 
         self.__index = self.scene_names.index(name)
-        return name, self.point_type, self.scene_3dpoints, self.labels_full_ori, self.record_path, self.mask_folder, self.click_folder, [self.underscore_to_blank(name) for name in self.scene_object_names]
+        return name, self.point_type, self.scene_3dpoints, self.labels_full_ori, self.record_path, self.mask_folder, self.click_folder, [self.underscore_to_blank(name) for name in self.scene_object_names], self.scene_3dpoints_features, self.scene_3dpoints_gt_masks_colors
 
     def get_object_semantic(self, name):
         obj_idx = self.scene_object_names.index(self.blank_to_underscore(name))

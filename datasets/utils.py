@@ -26,10 +26,11 @@ class VoxelizeCollate:
             inverse_maps,
             unique_maps,
             num_points,
+            num_obj,
             sequences,
             click_idxs,
             obj2labels,
-        ) = ([], [], [], [], [], [], [], [], [], [], [], [])
+        ) = ([], [], [], [], [], [], [], [], [], [], [], [], [])
 
         for sample in batch:
             scene_names.append(sample["sequence"])
@@ -38,6 +39,7 @@ class VoxelizeCollate:
             obj2labels.append(sample["obj2label"])
             original_labels.append(sample["labels"])
             num_points.append(sample["num_points"])
+            num_obj.append(sample["num_obj"])
             sequences.append(sample["sequence"])
             sample_c, sample_f, sample_l, inverse_map, unique_map = voxelize(
                 sample["coordinates"],
@@ -56,8 +58,8 @@ class VoxelizeCollate:
         coordinates, features = ME.utils.sparse_collate(coordinates, features)
         # TODO: why do we need here then the time i.e. features are: [original_x, original_y, original_z , time, intensity, distance]
         raw_coordinates = features[:, :3]  # [original_x, original_y, original_z , time]
-        # features = features[:, 4:]  # [intensity, distance]
-        features = features[:, 3:]  # [intensity, distance] / [time, intensity, distance]
+        features = features[:, 4:]  # [intensity, distance]
+        # features = features[:, 3:]  # [intensity, distance] / [time, intensity, distance]
         collated_data = generate_collated_data(
             mode=self.mode,
             scene_names=scene_names,
@@ -66,6 +68,7 @@ class VoxelizeCollate:
             features=features,
             raw_coordinates=raw_coordinates,
             num_points=num_points,
+            num_obj=num_obj,
             sequences=sequences,
             click_idx=click_idxs,
         )
@@ -130,6 +133,7 @@ def generate_collated_data(
     raw_coordinates,
     full_coordinates,
     num_points=None,
+    num_obj=None,
     sequences=None,
     click_idx=None,
 ):
@@ -139,6 +143,7 @@ def generate_collated_data(
     collated_data["features"] = features
     collated_data["raw_coordinates"] = raw_coordinates
     collated_data["num_points"] = num_points
+    collated_data["num_obj"] = num_obj
     collated_data["sequences"] = sequences
     collated_data["click_idx"] = click_idx
     collated_data["number_of_voxels"] = coordinates.shape[0]

@@ -1,4 +1,5 @@
 import wandb
+import os
 import math
 import hydra
 import copy
@@ -7,6 +8,7 @@ import warnings
 import MinkowskiEngine as ME
 import pytorch_lightning as pl
 import torch
+import numpy as np
 from contextlib import nullcontext
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
@@ -14,13 +16,13 @@ from torch.utils.data import DataLoader
 
 import utils.misc as utils
 from utils.utils import generate_wandb_objects3d, save_pcd
-from utils.seg import mean_iou, mean_iou_validation, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks, get_iou_based_simulated_clicks, get_objects_iou
+from utils.seg import mean_iou, mean_iou_validation, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks, get_iou_based_simulated_clicks, get_objects_iou, get_class_name, get_obj_ids_per_scan, get_things_stuff_miou
 from datasets.utils import VoxelizeCollate
 from datasets.lidar import LidarDataset
 from datasets.lidar_nuscenes import LidarDatasetNuscenes
 from models import Interactive4D
 from models.criterion import SetCriterion
-from models.metrics.utils import IoU_at_numClicks, NumClicks_for_IoU, mIoU_per_class_metric, mIoU_metric, losses_metric
+from models.metrics.utils import IoU_at_numClicks, NumClicks_for_IoU, NumClicks_for_IoU_class, mIoU_per_class_metric, mIoU_metric, losses_metric
 
 
 class ObjectSegmentation(pl.LightningModule):
@@ -58,7 +60,93 @@ class ObjectSegmentation(pl.LightningModule):
         # Validation metrics
         # self.mIoU_per_class_metric_validation = mIoU_per_class_metric(training=False)
         self.iou_at_numClicks = IoU_at_numClicks(num_clicks=self.config.general.clicks_of_interest)
+        self.iou_at_numClicks_weighted = IoU_at_numClicks(num_clicks=self.config.general.clicks_of_interest)
         self.numClicks_for_IoU = NumClicks_for_IoU(iou_thresholds=self.config.general.iou_targets)
+        self.numClicks_for_IoU_obj = NumClicks_for_IoU(iou_thresholds=self.config.general.iou_targets)
+        if self.config.general.dataset == "semantickitti":
+            self.label_mapping = {
+                0: "unlabeled",
+                1: "car",
+                2: "bicycle",
+                3: "motorcycle",
+                4: "truck",
+                5: "other-vehicle",
+                6: "person",
+                7: "bicyclist",
+                8: "motorcyclist",
+                9: "road",
+                10: "parking",
+                11: "sidewalk",
+                12: "other-ground",
+                13: "building",
+                14: "fence",
+                15: "vegetation",
+                16: "trunk",
+                17: "terrain",
+                18: "pole",
+                19: "traffic-sign",
+            }
+        elif self.config.general.dataset == "nuScenes_general":
+            self.label_mapping = {
+                0: "noise",
+                1: "animal",
+                2: "human.pedestrian.adult",
+                3: "human.pedestrian.child",
+                4: "human.pedestrian.construction_worker",
+                5: "human.pedestrian.personal_mobility",
+                6: "human.pedestrian.police_officer",
+                7: "human.pedestrian.stroller",
+                8: "human.pedestrian.wheelchair",
+                9: "movable_object.barrier",
+                10: "movable_object.debris",
+                11: "movable_object.pushable_pullable",
+                12: "movable_object.trafficcone",
+                13: "static_object.bicycle_rack",
+                14: "vehicle.bicycle",
+                15: "vehicle.bus.bendy",
+                16: "vehicle.bus.rigid",
+                17: "vehicle.car",
+                18: "vehicle.construction",
+                19: "vehicle.emergency.ambulance",
+                20: "vehicle.emergency.police",
+                21: "vehicle.motorcycle",
+                22: "vehicle.trailer",
+                23: "vehicle.truck",
+                24: "flat.driveable_surface",
+                25: "flat.other",
+                26: "flat.sidewalk",
+                27: "flat.terrain",
+                28: "static.manmade",
+                29: "static.other",
+                30: "static.vegetation",
+                31: "vehicle.ego",
+            }
+        elif self.config.general.dataset == "nuScenes_challenge":
+            label_mapping = {
+                0: "void / ignore",
+                1: "barrier (thing)",
+                2: "bicycle (thing)",
+                3: "bus (thing)",
+                4: "car (thing)",
+                5: "construction_vehicle (thing)",
+                6: "motorcycle (thing)",
+                7: "pedestrian (thing)",
+                8: "traffic_cone (thing)",
+                9: "trailer (thing)",
+                10: "truck (thing)",
+                11: "driveable_surface (stuff)",
+                12: "other_flat (stuff)",
+                13: "sidewalk (stuff)",
+                14: "terrain (stuff)",
+                15: "manmade (stuff)",
+                16: "vegetation (stuff)",
+            }
+        # iou@K for each class
+        self.iou_at_numClicks_class = {}
+        for class_type in self.label_mapping.values():
+            self.iou_at_numClicks_class[class_type] = IoU_at_numClicks(num_clicks=self.config.general.clicks_of_interest)
+        self.numClicks_for_IoU_class = NumClicks_for_IoU_class(iou_thresholds=self.config.general.iou_targets, label_mapping=self.label_mapping)
+        self.iou_tracking = {click_of_interest: {} for click_of_interest in self.config.general.clicks_of_interest}
         self.validation_metric_logger = utils.MetricLogger(delimiter="  ")
 
         self.save_hyperparameters()
@@ -170,6 +258,8 @@ class ObjectSegmentation(pl.LightningModule):
         scene_names = data["scene_names"]
         coords = data["coordinates"]
         raw_coords = data["raw_coordinates"]
+        num_points_split = data["num_points"]
+        num_obj_split = data["num_obj"]
         full_raw_coords = data["full_coordinates"]
         feats = data["features"]
         labels = target["labels"]
@@ -178,16 +268,16 @@ class ObjectSegmentation(pl.LightningModule):
         inverse_maps = target["inverse_maps"]
         number_of_points = data["number_of_points"]
         number_of_voxels = data["number_of_voxels"]
+        batch_indicators = coords[:, 0]
+        batch_size = batch_indicators.max() + 1
 
-        self.log("scene_size/number_of_points_validation", number_of_points, on_step=True)
-        self.log("scene_size/number_of_voxels_validation", number_of_voxels, prog_bar=True, on_step=True)
+        self.log("scene_size/number_of_points_validation", number_of_points, on_step=True, batch_size=batch_size)
+        self.log("scene_size/number_of_voxels_validation", number_of_voxels, prog_bar=True, on_step=True, batch_size=batch_size)
 
         cluster_dict = {}
 
         obj2label = [mapping[0] for mapping in target["obj2labels"]]
-        batch_indicators = coords[:, 0]
-        num_obj = [len(mapping.keys()) for mapping in obj2label]
-        batch_size = batch_indicators.max() + 1
+        num_obj = [math.ceil(sum(obj_count) / self.config.data.datasets.sweep) for obj_count in num_obj_split]
         current_num_clicks = 0
 
         # Remove objects which are not in the scene (due to quantization)
@@ -211,6 +301,25 @@ class ObjectSegmentation(pl.LightningModule):
             iou_targets.append(9999)  # serving as a stop condition
         max_num_clicks = num_obj[0] * self.config.general.max_num_clicks
         next_iou_target_indices = {idx: 0 for idx in range(batch_size)}
+
+        obj_ids_per_scan = get_obj_ids_per_scan(labels_full, num_points_split)
+        next_iou_target_indices_obj = {}
+        considered_clicks_per_obj = {}
+        for idx in range(batch_size):
+            next_iou_target_indices_obj[idx] = {}
+            considered_clicks_per_obj[idx] = {}
+            for obj_id in click_idx[idx].keys():
+                considered_clicks_per_obj[idx][obj_id] = {}
+                for threshold in iou_targets:
+                    considered_clicks_per_obj[idx][obj_id][threshold] = 0
+            for sweep_number in range(self.config.data.datasets.sweep):
+                next_iou_target_indices_obj[idx][sweep_number] = {}
+                for obj_id in obj_ids_per_scan[idx][sweep_number]:
+                    obj_id_str = str(obj_id)
+                    if obj_id_str == "0":
+                        continue
+                    next_iou_target_indices_obj[idx][sweep_number][obj_id_str] = 0
+
         while current_num_clicks <= max_num_clicks:
             if current_num_clicks == 0:
                 pred = [torch.zeros(l.shape).to(coords) for l in labels]
@@ -252,23 +361,72 @@ class ObjectSegmentation(pl.LightningModule):
                 sample_labels = labels[idx]
                 sample_raw_coords = raw_coords[sample_mask]
                 sample_pred_full = sample_pred[inverse_maps[idx]]
-
                 sample_labels_full = labels_full[idx]
-                # mean_iou_scene here is calculated for the entire scene (with all the points! not just the ones responsible for the quantized values)
-                sample_iou, _ = mean_iou_scene(sample_pred_full, sample_labels_full)
 
-                # Logging IoU@1, IoU@2, IoU@3, IoU@4, IoU@5
-                average_clicks_per_obj = current_num_clicks / num_obj[idx]
-                if average_clicks_per_obj in self.config.general.clicks_of_interest:
-                    self.iou_at_numClicks.update(iou=sample_iou.item(), noc=average_clicks_per_obj)
+                ##################################################################
+                #################  Split the superimposed scans  #################
+                ##################################################################
+                start_index = 0
+                for sweep_number, split_size in enumerate(num_points_split[idx]):
+                    end_index = start_index + split_size
+                    scan_sample_labels_full = sample_labels_full[start_index:end_index]
+                    scan_sample_pred_full = sample_pred_full[start_index:end_index]
 
-                # Logging NoC@50, NoC@65, NoC@80, NoC@85, NoC@90
-                if iou_targets[next_iou_target_indices[idx]] < sample_iou:
-                    while iou_targets[next_iou_target_indices[idx]] < sample_iou:
-                        self.numClicks_for_IoU.update(iou=iou_targets[next_iou_target_indices[idx]], noc=average_clicks_per_obj)
-                        next_iou_target_indices[idx] += 1
-                        if next_iou_target_indices[idx] == len(iou_targets) - 1:
-                            break
+                    # mean_iou_scene here is calculated for the entire scene (with all the points! not just the ones responsible for the quantized values)
+                    # sample_iou, per_obj_iou = mean_iou_scene(sample_pred_full, sample_labels_full)
+                    sample_iou, per_obj_iou = mean_iou_scene(scan_sample_pred_full, scan_sample_labels_full)
+
+                    # Logging IoU@1, IoU@2, IoU@3, IoU@4, IoU@5
+                    # And logging tracking_IoU@XX
+                    average_clicks_per_obj = current_num_clicks / num_obj[idx]
+                    if average_clicks_per_obj in self.config.general.clicks_of_interest:
+                        # save the prediciton into a file in the same format as the labels for pq / lstq metric calculation
+                        if self.config.general.save_predictions:
+                            scan_sample_pred_full_cpu = scan_sample_pred_full.cpu().numpy()
+                            mapped_predictions = np.array([obj2label[idx][str(point_pred)] if str(point_pred) in obj2label[idx] else point_pred for point_pred in scan_sample_pred_full_cpu])
+                            mapped_predictions = mapped_predictions.astype(np.uint32)
+                            current_scan_id = scene_names[idx][sweep_number].split("/")[-1].split(".")[0]
+                            output_filepath = os.path.join(self.config.general.prediction_dir, f"average_{average_clicks_per_obj}_clicks", f"{current_scan_id}.bin")
+                            os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
+                            mapped_predictions.tofile(output_filepath)
+
+                        self.iou_at_numClicks.update(iou=sample_iou.item(), noc=average_clicks_per_obj)
+                        for obj_id in click_idx[idx].keys():
+                            if obj_id == "0" or int(obj_id) not in per_obj_iou:
+                                continue
+                            self.iou_at_numClicks_weighted.update(iou=sample_iou.item(), noc=average_clicks_per_obj)
+                            class_type = get_class_name(self.config.general.dataset, obj2label, idx, str(obj_id), self.label_mapping)
+                            # iou_tensor = torch.tensor(per_obj_iou[int(obj_id)], dtype=torch.float32, device=self.device)
+                            # average_clicks_per_obj_tensor = torch.tensor(average_clicks_per_obj, dtype=torch.float32, device=self.device)
+                            self.iou_at_numClicks_class[class_type].update(iou=per_obj_iou[int(obj_id)], noc=average_clicks_per_obj)
+                            current_panoptic_label = obj2label[idx][obj_id]
+                            self.iou_tracking[int(average_clicks_per_obj)][current_panoptic_label] = per_obj_iou[int(obj_id)]
+
+                    # Logging NoC@ , NoC@65, NoC@80, NoC@85, NoC@90
+                    if iou_targets[next_iou_target_indices[idx]] < sample_iou:
+                        while iou_targets[next_iou_target_indices[idx]] < sample_iou:
+                            self.numClicks_for_IoU.update(iou=iou_targets[next_iou_target_indices[idx]], noc=average_clicks_per_obj)
+                            next_iou_target_indices[idx] += 1
+                            if next_iou_target_indices[idx] == len(iou_targets) - 1:
+                                break
+
+                    # Logging NoC_obj@50, NoC_obj@65, NoC_obj@80, NoC_obj@85, NoC_obj@90
+                    for obj_id in click_idx[idx].keys():
+                        if obj_id == "0" or int(obj_id) not in per_obj_iou:
+                            continue
+                        current_obj_click_count = len(click_idx[idx][obj_id])
+                        if iou_targets[next_iou_target_indices_obj[idx][sweep_number][obj_id]] < per_obj_iou[int(obj_id)]:
+                            while iou_targets[next_iou_target_indices_obj[idx][sweep_number][obj_id]] < per_obj_iou[int(obj_id)]:
+                                current_threshold = iou_targets[next_iou_target_indices_obj[idx][sweep_number][obj_id]]
+                                effective_clicks_per_obj = current_obj_click_count - considered_clicks_per_obj[idx][obj_id][current_threshold]
+                                required_noc = min(effective_clicks_per_obj, self.config.general.max_num_clicks)
+                                self.numClicks_for_IoU_obj.update(iou=iou_targets[next_iou_target_indices_obj[idx][sweep_number][obj_id]], noc=required_noc)
+                                class_type = get_class_name(self.config.general.dataset, obj2label, idx, obj_id, self.label_mapping)
+                                self.numClicks_for_IoU_class.update(iou=iou_targets[next_iou_target_indices_obj[idx][sweep_number][obj_id]], noc=required_noc, class_type=class_type)
+                                next_iou_target_indices_obj[idx][sweep_number][obj_id] += 1
+                                considered_clicks_per_obj[idx][obj_id][current_threshold] = current_obj_click_count
+                                if next_iou_target_indices_obj[idx][sweep_number][obj_id] == len(iou_targets) - 1:
+                                    break
 
                 if updated_pred == []:
                     objects_info = get_objects_iou(pred, labels)
@@ -290,8 +448,10 @@ class ObjectSegmentation(pl.LightningModule):
                 if new_clicks is not None:
                     click_idx[idx], click_time_idx[idx] = extend_clicks(click_idx[idx], click_time_idx[idx], new_clicks, new_click_time)
 
+                start_index = end_index
+
             if current_num_clicks != 0:
-                # mean_iou here is calculated for just with the points responsible for the quantized values!
+                # mean_iou here is calculated just with the points responsible for the quantized values!
                 general_miou, label_miou_dict, objects_info = mean_iou_validation(updated_pred, labels, obj2label, self.dataset_type)
 
                 label_miou_dict = {"validation/" + k: v for k, v in label_miou_dict.items()}
@@ -315,10 +475,28 @@ class ObjectSegmentation(pl.LightningModule):
                 self.numClicks_for_IoU.update(iou=iou_targets[next_iou_target_indices[idx]], noc=self.config.general.max_num_clicks)
                 next_iou_target_indices[idx] += 1
 
-        if (batch_idx % self.config.general.visualization_frequency == 0) or (general_miou < 0.4):  # Condition for visualization logging
+        # Update NoC_obj@target for all the targets that have not been reached:
+        for idx in range(batch_size):
+            start_index = 0
+            for sweep_number, split_size in enumerate(num_points_split[idx]):
+                end_index = start_index + split_size
+                scan_sample_labels_full = sample_labels_full[start_index:end_index]
+                scan_sample_pred_full = sample_pred_full[start_index:end_index]
+                for obj_id in click_idx[idx].keys():
+                    if obj_id == "0" or int(obj_id) not in obj_ids_per_scan[idx][sweep_number]:
+                        continue
+                    while next_iou_target_indices_obj[idx][sweep_number][obj_id] != len(iou_targets) - 1:
+                        self.numClicks_for_IoU_obj.update(iou=iou_targets[next_iou_target_indices_obj[idx][sweep_number][obj_id]], noc=self.config.general.max_num_clicks)
+                        class_type = get_class_name(self.config.general.dataset, obj2label, idx, obj_id, self.label_mapping)
+                        self.numClicks_for_IoU_class.update(iou=iou_targets[next_iou_target_indices_obj[idx][sweep_number][obj_id]], noc=self.config.general.max_num_clicks, class_type=class_type)
+                        next_iou_target_indices_obj[idx][sweep_number][obj_id] += 1
+                start_index = end_index
+
+        # if (batch_idx % self.config.general.visualization_frequency == 0) or (general_miou < 0.4):  # Condition for visualization logging
+        if False:  # Condition for visualization logging
             # choose a random scene to visualize from the batch
             chosen_scene_idx = random.randint(0, batch_size - 1)
-            scene_name = scene_names[chosen_scene_idx]
+            scene_name = scene_names[chosen_scene_idx][0]
             scene_name = scene_name.split("/")[-1].split(".")[0]
             sample_raw_coords_full = full_raw_coords[chosen_scene_idx]
             sample_mask = batch_indicators == chosen_scene_idx
@@ -348,6 +526,8 @@ class ObjectSegmentation(pl.LightningModule):
         results_dict["mIoU_quantized"] = self.validation_metric_logger.meters["mIoU_quantized"].global_avg
         # Evaluate the NoC@IoU Metric
         metrics_dictionary, iou_thresholds = self.numClicks_for_IoU.compute()
+        metrics_dictionary_obj, iou_thresholds_obj = self.numClicks_for_IoU_obj.compute()
+        metrics_dictionary_class, iou_thresholds_class = self.numClicks_for_IoU_class.compute()
         for iou in iou_thresholds:
             noc = metrics_dictionary[iou]["noc"]
             count = metrics_dictionary[iou]["count"]
@@ -357,17 +537,69 @@ class ObjectSegmentation(pl.LightningModule):
             else:
                 results_dict[f"NoC@{iou}"] = (noc / count).item()
 
+        for iou in iou_thresholds_obj:
+            noc = metrics_dictionary_obj[iou]["noc"]
+            count = metrics_dictionary_obj[iou]["count"]
+            results_dict[f"scenes_reached_{iou}_iou"] = count.item()
+            if count == 0:
+                results_dict[f"NoC_obj@{iou}"] = 0  # or return a default value or raise an error
+            else:
+                results_dict[f"NoC_obj@{iou}"] = (noc / count).item()
+
+        class_noc = {}
+        for iou in iou_thresholds_class:
+            for class_type in self.label_mapping.values():
+                noc = metrics_dictionary_class[class_type][iou]["noc"]
+                count = metrics_dictionary_class[class_type][iou]["count"]
+                if count == 0:
+                    tmp = 0
+                else:
+                    tmp = (noc / count).item()
+                class_noc[f"validation/noc_class/NoC_{class_type}@{iou}"] = tmp
+
         # Evaluate the IoU@NoC Metric
         metrics_dictionary, evaluated_num_clicks = self.iou_at_numClicks.compute()
+        metrics_dictionary_weighted, evaluated_num_clicks_weighted = self.iou_at_numClicks_weighted.compute()
         for noc in evaluated_num_clicks:
             iou = metrics_dictionary[noc]["iou"]
             count = metrics_dictionary[noc]["count"]
+            iou_weighted = metrics_dictionary_weighted[noc]["iou"]
+            count_weighted = metrics_dictionary_weighted[noc]["count"]
             if count == 0:
                 results_dict[f"IoU@{noc}"] = 0  # or return a default value or raise an error
             else:
                 results_dict[f"IoU@{noc}"] = (iou / count).item()
+            if count_weighted == 0:
+                results_dict[f"IoU_weighted@{noc}"] = 0  # or return a default value or raise an error
+            else:
+                results_dict[f"IoU_weighted@{noc}"] = (iou_weighted / count_weighted).item()
+
+        # evaluate the IoU@NoC per class
+        class_IoU_weighted_results = {}
+        class_IoU_weighted_results_extended = {}
+        for class_type in self.label_mapping.values():
+            class_IoU_weighted_results_extended[class_type] = {}
+            self.iou_at_numClicks_class[class_type].to(self.device)
+            metrics_dictionary, evaluated_num_clicks = self.iou_at_numClicks_class[class_type].compute()
+            for noc in evaluated_num_clicks:
+                iou = metrics_dictionary[noc]["iou"]
+                count = metrics_dictionary[noc]["count"]
+                if count == 0:
+                    class_IoU_weighted_results[f"IoU_{class_type}@{noc}"] = -1  # or return a default value or raise an error
+                    class_IoU_weighted_results_extended[class_type][f"IoU@{noc}"] = None
+                    print(f"The count is 0 for the class type: {class_type}")
+                else:
+                    class_IoU_weighted_results[f"validation/IoU_per_class/IoU_{class_type}@{noc}"] = (iou / count).item()
+                    class_IoU_weighted_results_extended[class_type][f"IoU@{noc}"] = (iou / count).item()
+
+        clickformer_IoU_score = get_things_stuff_miou(self.dataset_type, class_IoU_weighted_results_extended, self.label_mapping, self.config.general.clicks_of_interest)
+
+        print(class_IoU_weighted_results)
         print("\n")
         print(results_dict)
+        self.log_dict(class_IoU_weighted_results)
+        self.log_dict(clickformer_IoU_score)
+
         stats = {k: meter.global_avg for k, meter in self.validation_metric_logger.meters.items()}
         stats.update(results_dict)
         if "IoU@6" in stats.keys():
@@ -378,26 +610,40 @@ class ObjectSegmentation(pl.LightningModule):
                     "validation/loss_bce_epoch": stats["loss_bce"],
                     "validation/loss_dice_epoch": stats["loss_dice"],
                     "validation/mIoU_quantized_epoch": stats["mIoU_quantized"],
-                    "validation/Interactive_metrics/NoC_50": stats["NoC@50"],
-                    "validation/Interactive_metrics/scenes_reached_50_iou": stats["scenes_reached_50_iou"],
-                    "validation/Interactive_metrics/NoC_65": stats["NoC@65"],
-                    "validation/Interactive_metrics/scenes_reached_65_iou": stats["scenes_reached_65_iou"],
-                    "validation/Interactive_metrics/NoC_80": stats["NoC@80"],
-                    "validation/Interactive_metrics/scenes_reached_80_iou": stats["scenes_reached_80_iou"],
-                    "validation/Interactive_metrics/NoC_85": stats["NoC@85"],
-                    "validation/Interactive_metrics/scenes_reached_85_iou": stats["scenes_reached_85_iou"],
-                    "validation/Interactive_metrics/NoC_90": stats["NoC@90"],
-                    "validation/Interactive_metrics/scenes_reached_90_iou": stats["scenes_reached_90_iou"],
+                    "validation/Interactive_metrics/NoC_50_scene": stats["NoC@50"],
+                    "validation/Interactive_metrics/NoC_obj_50_scene": stats["NoC_obj@50"],
+                    "validation/Interactive_metrics/NoC_65_scene": stats["NoC@65"],
+                    "validation/Interactive_metrics/NoC_obj_65_scene": stats["NoC_obj@65"],
+                    "validation/Interactive_metrics/NoC_80_scene": stats["NoC@80"],
+                    "validation/Interactive_metrics/NoC_obj_80_scene": stats["NoC_obj@80"],
+                    "validation/Interactive_metrics/NoC_85_scene": stats["NoC@85"],
+                    "validation/Interactive_metrics/NoC_obj_85_scene": stats["NoC_obj@85"],
+                    "validation/Interactive_metrics/NoC_90_Scene": stats["NoC@90"],
+                    "validation/Interactive_metrics/NoC_obj_90_Scene": stats["NoC_obj@90"],
                     "validation/Interactive_metrics/IoU_1": stats["IoU@1"],
                     "validation/Interactive_metrics/IoU_2": stats["IoU@2"],
                     "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
                     "validation/Interactive_metrics/IoU_4": stats["IoU@4"],
                     "validation/Interactive_metrics/IoU_5": stats["IoU@5"],
-                    "validation/Interactive_metrics/IoU_5": stats["IoU@6"],
-                    "validation/Interactive_metrics/IoU_5": stats["IoU@7"],
-                    "validation/Interactive_metrics/IoU_5": stats["IoU@8"],
-                    "validation/Interactive_metrics/IoU_5": stats["IoU@9"],
-                    "validation/Interactive_metrics/IoU_5": stats["IoU@10"],
+                    "validation/Interactive_metrics/IoU_6": stats["IoU@6"],
+                    "validation/Interactive_metrics/IoU_7": stats["IoU@7"],
+                    "validation/Interactive_metrics/IoU_8": stats["IoU@8"],
+                    "validation/Interactive_metrics/IoU_9": stats["IoU@9"],
+                    "validation/Interactive_metrics/IoU_10": stats["IoU@10"],
+                }
+            )
+            self.log_dict(
+                {
+                    "validation/Interactive_metrics/IoU_weighted_1": stats["IoU_weighted@1"],
+                    "validation/Interactive_metrics/IoU_weighted_2": stats["IoU_weighted@2"],
+                    "validation/Interactive_metrics/IoU_weighted_3": stats["IoU_weighted@3"],
+                    "validation/Interactive_metrics/IoU_weighted_4": stats["IoU_weighted@4"],
+                    "validation/Interactive_metrics/IoU_weighted_5": stats["IoU_weighted@5"],
+                    "validation/Interactive_metrics/IoU_weighted_6": stats["IoU_weighted@6"],
+                    "validation/Interactive_metrics/IoU_weighted_7": stats["IoU_weighted@7"],
+                    "validation/Interactive_metrics/IoU_weighted_8": stats["IoU_weighted@8"],
+                    "validation/Interactive_metrics/IoU_weighted_9": stats["IoU_weighted@9"],
+                    "validation/Interactive_metrics/IoU_weighted_10": stats["IoU_weighted@10"],
                 }
             )
         else:
@@ -408,16 +654,16 @@ class ObjectSegmentation(pl.LightningModule):
                     "validation/loss_bce_epoch": stats["loss_bce"],
                     "validation/loss_dice_epoch": stats["loss_dice"],
                     "validation/mIoU_quantized_epoch": stats["mIoU_quantized"],
-                    "validation/Interactive_metrics/NoC_50": stats["NoC@50"],
-                    "validation/Interactive_metrics/scenes_reached_50_iou": stats["scenes_reached_50_iou"],
-                    "validation/Interactive_metrics/NoC_65": stats["NoC@65"],
-                    "validation/Interactive_metrics/scenes_reached_65_iou": stats["scenes_reached_65_iou"],
-                    "validation/Interactive_metrics/NoC_80": stats["NoC@80"],
-                    "validation/Interactive_metrics/scenes_reached_80_iou": stats["scenes_reached_80_iou"],
-                    "validation/Interactive_metrics/NoC_85": stats["NoC@85"],
-                    "validation/Interactive_metrics/scenes_reached_85_iou": stats["scenes_reached_85_iou"],
-                    "validation/Interactive_metrics/NoC_90": stats["NoC@90"],
-                    "validation/Interactive_metrics/scenes_reached_90_iou": stats["scenes_reached_90_iou"],
+                    "validation/Interactive_metrics/NoC_50_scene": stats["NoC@50"],
+                    "validation/Interactive_metrics/NoC_obj_50_scene": stats["NoC_obj@50"],
+                    "validation/Interactive_metrics/NoC_65_scene": stats["NoC@65"],
+                    "validation/Interactive_metrics/NoC_obj_65_scene": stats["NoC_obj@65"],
+                    "validation/Interactive_metrics/NoC_80_scene": stats["NoC@80"],
+                    "validation/Interactive_metrics/NoC_obj_80_scene": stats["NoC_obj@80"],
+                    "validation/Interactive_metrics/NoC_85_scene": stats["NoC@85"],
+                    "validation/Interactive_metrics/NoC_obj_85_scene": stats["NoC_obj@85"],
+                    "validation/Interactive_metrics/NoC_90_Scene": stats["NoC@90"],
+                    "validation/Interactive_metrics/NoC_obj_90_Scene": stats["NoC_obj@90"],
                     "validation/Interactive_metrics/IoU_1": stats["IoU@1"],
                     "validation/Interactive_metrics/IoU_2": stats["IoU@2"],
                     "validation/Interactive_metrics/IoU_3": stats["IoU@3"],
@@ -426,6 +672,21 @@ class ObjectSegmentation(pl.LightningModule):
                 }
             )
         # self.validation_step_outputs.clear()  # free memory
+        self.log_dict(class_noc)
+
+        # evaluate iou tracking
+        print("IoU Tracking Results:")
+        for click_of_interest in self.config.general.clicks_of_interest:
+            print(f"Tracking IoU at Number of Clicks: {click_of_interest}")
+            total_iou = 0
+            total_count = 0
+            for panoptic_label, iou in self.iou_tracking[click_of_interest].items():
+                print(f"{panoptic_label}: {iou}")
+                total_iou += iou
+                total_count += 1
+            tmp = total_iou / total_count
+            click_of_interest_int = int(click_of_interest)
+            self.log_dict({f"validation/Interactive_metrics/Tracking_IoU_{click_of_interest_int}": tmp})
         self.validation_metric_logger = utils.MetricLogger(delimiter="  ")  # reset metric
 
     def test_step(self, batch, batch_idx):

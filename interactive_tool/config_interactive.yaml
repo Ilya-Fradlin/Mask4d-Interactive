@@ -33,7 +33,7 @@ trainer:
 data:
   ignore_label: 255
   datasets:
-    data_dir: /work/fradlin/Interactive_dataset/agile3d_data/interactive_dataset
+    data_dir: /nodes/veltins/work/fradlin/Interactive_dataset/interactive4d_data # /work/fradlin/Interactive_dataset/agile3d_data/interactive_dataset
     sample_choice_train: full # full / subsampled / short
     sample_choice_validation: short # full / subsampled / short
     obj_type: all # things, stuff, all
