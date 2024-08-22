@@ -638,7 +638,7 @@ def get_obj_ids_per_scan(labels_full, num_points_split):
             obj_ids = torch.unique(scan_sample_labels_full)
             obj_ids = obj_ids[obj_ids != 0]
             obj_ids_per_scan[idx][scan_index] = np.asarray(obj_ids.cpu())
-            end_index = start_index
+            start_index = end_index
     return obj_ids_per_scan
 
 

@@ -1,7 +1,7 @@
 import wandb
 import os
 import math
-import hydra
+import json
 import copy
 import random
 import warnings
@@ -15,7 +15,7 @@ from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 
 import utils.misc as utils
-from utils.utils import generate_wandb_objects3d, save_pcd
+from utils.utils import generate_wandb_objects3d, save_pcd, save_clicks_to_json, save_predictions
 from utils.seg import mean_iou, mean_iou_validation, mean_iou_scene, cal_click_loss_weights, extend_clicks, get_simulated_clicks, get_iou_based_simulated_clicks, get_objects_iou, get_class_name, get_obj_ids_per_scan, get_things_stuff_miou
 from datasets.utils import VoxelizeCollate
 from datasets.lidar import LidarDataset
@@ -266,6 +266,7 @@ class ObjectSegmentation(pl.LightningModule):
         labels_full = [torch.from_numpy(l).to(coords) for l in target["labels_full"]]
         click_idx = data["click_idx"]
         inverse_maps = target["inverse_maps"]
+        unique_maps = target["unique_maps"]
         number_of_points = data["number_of_points"]
         number_of_voxels = data["number_of_voxels"]
         batch_indicators = coords[:, 0]
@@ -367,28 +368,29 @@ class ObjectSegmentation(pl.LightningModule):
                 #################  Split the superimposed scans  #################
                 ##################################################################
                 start_index = 0
+                assert sum(num_points_split[idx]) == len(sample_labels_full)
                 for sweep_number, split_size in enumerate(num_points_split[idx]):
                     end_index = start_index + split_size
+                    assert (end_index - start_index) == split_size
                     scan_sample_labels_full = sample_labels_full[start_index:end_index]
                     scan_sample_pred_full = sample_pred_full[start_index:end_index]
 
                     # mean_iou_scene here is calculated for the entire scene (with all the points! not just the ones responsible for the quantized values)
                     # sample_iou, per_obj_iou = mean_iou_scene(sample_pred_full, sample_labels_full)
                     sample_iou, per_obj_iou = mean_iou_scene(scan_sample_pred_full, scan_sample_labels_full)
+                    self.log(f"validation/full_mIoU_sweep_{sweep_number}", sample_iou, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=True)
 
                     # Logging IoU@1, IoU@2, IoU@3, IoU@4, IoU@5
                     # And logging tracking_IoU@XX
                     average_clicks_per_obj = current_num_clicks / num_obj[idx]
                     if average_clicks_per_obj in self.config.general.clicks_of_interest:
-                        # save the prediciton into a file in the same format as the labels for pq / lstq metric calculation
+                        # save the predictions into a file in the same format as the labels for pq / lstq metric calculation
                         if self.config.general.save_predictions:
-                            scan_sample_pred_full_cpu = scan_sample_pred_full.cpu().numpy()
-                            mapped_predictions = np.array([obj2label[idx][str(point_pred)] if str(point_pred) in obj2label[idx] else point_pred for point_pred in scan_sample_pred_full_cpu])
-                            mapped_predictions = mapped_predictions.astype(np.uint32)
-                            current_scan_id = scene_names[idx][sweep_number].split("/")[-1].split(".")[0]
-                            output_filepath = os.path.join(self.config.general.prediction_dir, f"average_{average_clicks_per_obj}_clicks", f"{current_scan_id}.bin")
-                            os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
-                            mapped_predictions.tofile(output_filepath)
+                            save_predictions(scan_sample_pred_full, obj2label[idx], scene_names[idx], sweep_number, int(average_clicks_per_obj), self.config.general.prediction_dir, self.config.general.dataset)
+                            if sweep_number == 0:
+                                # save the clicks into a json file
+                                current_scan_id = scene_names[idx][sweep_number].split("/")[-1].split(".")[0]
+                                save_clicks_to_json(int(average_clicks_per_obj), click_idx[idx], click_time_idx[idx], unique_maps[idx], current_scan_id, self.config.data.datasets.sweep, self.config.general.prediction_dir)
 
                         self.iou_at_numClicks.update(iou=sample_iou.item(), noc=average_clicks_per_obj)
                         for obj_id in click_idx[idx].keys():
@@ -428,6 +430,12 @@ class ObjectSegmentation(pl.LightningModule):
                                 if next_iou_target_indices_obj[idx][sweep_number][obj_id] == len(iou_targets) - 1:
                                     break
 
+                    start_index = end_index
+
+                ##################################################################
+                ############### continue in the superimposed setup  ##############
+                ##################################################################
+
                 if updated_pred == []:
                     objects_info = get_objects_iou(pred, labels)
                 else:
@@ -448,14 +456,11 @@ class ObjectSegmentation(pl.LightningModule):
                 if new_clicks is not None:
                     click_idx[idx], click_time_idx[idx] = extend_clicks(click_idx[idx], click_time_idx[idx], new_clicks, new_click_time)
 
-                start_index = end_index
-
             if current_num_clicks != 0:
                 # mean_iou here is calculated just with the points responsible for the quantized values!
                 general_miou, label_miou_dict, objects_info = mean_iou_validation(updated_pred, labels, obj2label, self.dataset_type)
 
                 label_miou_dict = {"validation/" + k: v for k, v in label_miou_dict.items()}
-                self.log("validation/full_mIoU", sample_iou, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=True)
                 self.log("validation/quantized_mIoU", general_miou, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=True)
                 self.log_dict(label_miou_dict, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
                 self.validation_metric_logger.update(mIoU_quantized=general_miou)

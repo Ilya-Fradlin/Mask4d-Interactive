@@ -10,7 +10,7 @@ general:
   experiment_name: now-Interactive4d_10cm_validation2 # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
   save_dir: saved/validations/${general.experiment_name} # saved/${general.experiment_name}
   save_predictions: false
-  prediction_dir: /nodes/veltins/work/predictions/${general.experiment_name}
+  prediction_dir: /nodes/veltins/work/fradlin/predictions/${general.experiment_name}/sequences/08/predictions/
   visualization_dir: saved/${general.experiment_name}/pointclouds
   # Frequently Adjusted Parameters
   visualization_frequency: 500

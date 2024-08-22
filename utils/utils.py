@@ -1,7 +1,10 @@
 import torch
+import os
+import json
 import sys
 import wandb
 import numpy as np
+from pathlib import Path
 from scipy.optimize import linear_sum_assignment
 from sklearn.cluster import KMeans
 
@@ -201,3 +204,71 @@ def labels_to_colors(labels):
     # Apply the color map
     colors = np.array([label_to_color[int(label.item())] for label in labels])
     return colors
+
+
+def save_predictions(scan_sample_pred_full, obj2label, scene_names, sweep_number, average_clicks_per_obj, prediction_dir, dataset_type):
+    learning_map_inv = {
+        0: 0,  # "unlabeled", and others ignored
+        1: 10,  # "car"
+        2: 11,  # "bicycle"
+        3: 15,  # "motorcycle"
+        4: 18,  # "truck"
+        5: 20,  # "other-vehicle"
+        6: 30,  # "person"
+        7: 31,  # "bicyclist"
+        8: 32,  # "motorcyclist"
+        9: 40,  # "road"
+        10: 44,  # "parking"
+        11: 48,  # "sidewalk"
+        12: 49,  # "other-ground"
+        13: 50,  # "building"
+        14: 51,  # "fence"
+        15: 70,  # "vegetation"
+        16: 71,  # "trunk"
+        17: 72,  # "terrain"
+        18: 80,  # "pole"
+        19: 81,  # "traffic-sign"
+    }
+    scan_sample_pred_full_cpu = scan_sample_pred_full.cpu().numpy()
+    mapped_predictions = np.array([obj2label[str(point_pred)] if str(point_pred) in obj2label else point_pred for point_pred in scan_sample_pred_full_cpu])
+    mapped_predictions = mapped_predictions.astype(np.uint32)
+    if dataset_type == "semantickitti":
+        semantic_preds = mapped_predictions & 0xFFFF
+        semantic_preds = np.vectorize(learning_map_inv.__getitem__)(semantic_preds)
+        instance_preds = mapped_predictions >> 16
+        mapped_predictions = (instance_preds << 16) + semantic_preds
+    current_scan_id = scene_names[sweep_number].split("/")[-1].split(".")[0]
+    average_clicks_folder = f"average_{average_clicks_per_obj}_clicks"
+    base_path, remaining_path = prediction_dir.rsplit("sequences", 1)
+    updated_prediction_dir = os.path.join(base_path, average_clicks_folder, "sequences" + remaining_path)
+    updated_prediction_dir = Path(updated_prediction_dir)
+    output_filepath = updated_prediction_dir / f"{current_scan_id}.label"
+    os.makedirs(os.path.dirname(output_filepath), exist_ok=True)
+    if not os.path.exists(output_filepath):
+        with open(output_filepath, "wb") as f:
+            f.write(mapped_predictions.astype(np.uint32).tobytes())
+
+
+def save_clicks_to_json(average_clicks_per_obj, click_idx, click_time_idx, unique_maps, current_scan_id, sweep, prediction_dir):
+    # save the clicks into a file (after mapping them to the full point cloud)
+    current_scan_id_int = int(current_scan_id)
+    if sweep == 1:
+        end_scan_id_int = current_scan_id_int
+    else:
+        end_scan_id_int = current_scan_id_int + sweep - 1
+    end_scan_id = str(end_scan_id_int).zfill(len(current_scan_id))
+    filename = f"clicks_sweep_{current_scan_id}_{end_scan_id}.json"
+    average_clicks_folder = f"average_{average_clicks_per_obj}_clicks"
+    base_path, _ = prediction_dir.rsplit("sequences", 1)
+
+    updated_prediction_dir = os.path.join(base_path, "used_clicks", average_clicks_folder)
+    clicks_filepath = os.path.join(updated_prediction_dir, f"average_{average_clicks_per_obj}_clicks", filename)
+    original_clicks = {}
+    for key, voxel_indices in click_idx.items():
+        original_clicks[key] = [unique_maps[voxel_idx].item() for voxel_idx in voxel_indices]
+    click_data = {"original_clicks": original_clicks, "click_time_idx": click_time_idx}
+    clicks_filepath = os.path.join(updated_prediction_dir, f"clicks_sweep_{current_scan_id}_{end_scan_id}.json")
+    os.makedirs(os.path.dirname(clicks_filepath), exist_ok=True)
+    # Save the combined data as a JSON file
+    with open(clicks_filepath, "w") as f:
+        json.dump(click_data, f, indent=4)

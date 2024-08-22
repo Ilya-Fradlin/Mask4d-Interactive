@@ -98,10 +98,11 @@ class LidarDataset(Dataset):
             for i in range(len(lst) - n + 1):
                 yield lst[i : i + n]
         else:
-            for i in range(0, len(lst) - n + 1, n - 1):
+            # Non-overlapping chunks
+            for i in range(0, len(lst) - n, n):
                 yield lst[i : i + n]
-            if i != len(lst) - n:
-                yield lst[i + n - 1 :]
+            # Ensure the last chunk is also of size n, taking the last n elements
+            yield lst[-n:]
 
     def __len__(self):
         return len(self.data)
@@ -125,7 +126,6 @@ class LidarDataset(Dataset):
             # rotate and translate
             pose = np.array(scan["pose"]).T
             coordinates = coordinates @ pose[:3, :3] + pose[3, :3]
-            acc_num_points.append(len(coordinates))
 
             # features
             features = points[:, 3:4]  # intensity
@@ -151,6 +151,8 @@ class LidarDataset(Dataset):
                 labels = labels[mask]
                 coordinates = coordinates[mask]
                 features = features[mask]
+
+            acc_num_points.append(len(labels))
 
             labels_list.append(labels)
             coordinates_list.append(coordinates)

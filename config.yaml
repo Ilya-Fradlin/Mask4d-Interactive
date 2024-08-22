@@ -10,7 +10,7 @@ general:
   save_dir: saved/${general.experiment_name}
   visualization_dir: saved/${general.experiment_name}/pointclouds
   save_predictions: false
-  prediction_dir: /nodes/veltins/work/predictions/${general.experiment_name}
+  prediction_dir: /nodes/veltins/work/fradlin/predictions/${general.experiment_name}/sequences/08/predictions/
   # Frequently Adjusted Parameters
   visualization_frequency: 500
   ckpt_path: null # i.e. /home/fradlin/Github/Mask4D-Interactive/saved/2024-05-12_092821/last.ckpt
