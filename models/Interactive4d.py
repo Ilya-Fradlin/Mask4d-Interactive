@@ -38,7 +38,7 @@ class Interactive4D(nn.Module):
         backbone_cfg.dilations = [1, 1, 1, 1]
         backbone_cfg.conv1_kernel_size = 5
         backbone_cfg.bn_momentum = 0.02
-        self.backbone = Res16UNet34C(in_channels=2, out_channels=19, config=backbone_cfg)
+        self.backbone = Res16UNet34C(in_channels=3, out_channels=19, config=backbone_cfg)
         self.num_heads = num_heads
         self.num_decoders = num_decoders
         self.num_levels = num_levels
@@ -133,6 +133,7 @@ class Interactive4D(nn.Module):
 
         self.decoder_norm = nn.LayerNorm(hidden_dim)
         self.time_encode = PositionalEncoding1D(hidden_dim, 2000)
+        self.scan_num_encode = PositionalEncoding1D(hidden_dim, 5000)
         if self.use_objid_attention:
             self.object_embedding = nn.Embedding(400, hidden_dim)
 
@@ -168,7 +169,7 @@ class Interactive4D(nn.Module):
 
         return pcd_features, all_features, coordinates, pos_encodings_pcd
 
-    def forward_mask(self, pcd_features, aux, coordinates, pos_encodings_pcd, click_idx=None, click_time_idx=None):
+    def forward_mask(self, pcd_features, aux, coordinates, pos_encodings_pcd, click_idx=None, click_time_idx=None, scan_numbers=None):
 
         batch_size = pcd_features.C[:, 0].max() + 1
 
@@ -245,6 +246,9 @@ class Interactive4D(nn.Module):
                 bg_queries += bg_query_obj
 
             src_pcd = pcd_features.decomposed_features[b]
+            # Add scan encoding for 4d setup for the attention mechanism
+            src_pcd_scan_num_encoding = self.scan_num_encode[scan_numbers.cpu().long()].to(src_pcd.device)
+            src_pcd += src_pcd_scan_num_encoding
 
             refine_time = 0
 

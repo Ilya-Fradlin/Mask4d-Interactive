@@ -3,18 +3,18 @@ general:
   gpus: null
   seed: 42
   project_name: Mask4D-Interactive
-  dataset: semantickitti # semantickitti / nuScenes_general / nuScenes_challenge
+  dataset: semantickitti # semantickitti / nuScenes_general / nuScenes_challenge / KITTI360
   workspace: Ilyafr97
   instance_population: 20
   dbscan_eps: null
-  experiment_name: now-Interactive4d_10cm_validation2 # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
+  experiment_name: now-Interactive4d_validation3 # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
   save_dir: saved/validations/${general.experiment_name} # saved/${general.experiment_name}
   save_predictions: false
   prediction_dir: /nodes/veltins/work/fradlin/predictions/${general.experiment_name}/sequences/08/predictions/
   visualization_dir: saved/${general.experiment_name}/pointclouds
   # Frequently Adjusted Parameters
-  visualization_frequency: 500
-  ckpt_path: /work/fradlin/checkpoints/Interactive4d_single_scan/interactive4d_10cm_10trained.ckpt
+  visualization_frequency: 10
+  ckpt_path: /nodes/veltins/work/fradlin/checkpoints/Interactive4d_multi_scan/sweep4/Interactive4d_sweep4_10cm_5trained.ckpt
   max_num_clicks: 10
   max_clicks_per_obj: 40
   use_objid_attention: true

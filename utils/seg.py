@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import random
 from scipy.spatial import ConvexHull
+from datasets.kitti360_info import get_things_stuff_split_kitti360
 
 
 def mean_iou_single(pred, labels):
@@ -57,12 +58,12 @@ def mean_iou(pred, labels, obj2label, dataset_type="semantickitti"):
     return iou_batch, average_iou_per_label
 
 
-def mean_iou_validation(pred, labels, obj2label, dataset_type="semantickitti"):
+def mean_iou_validation(pred, labels, obj2label, label_mapping=None, dataset_type="semantickitti"):
     """Calculate the mean IoU for a batch"""
     assert len(pred) == len(labels)
     bs = len(pred)
     iou_batch = 0.0
-    label_mapping = get_label_mapping(dataset_type)[0]
+    # label_mapping = get_label_mapping(dataset_type)[0]
     iou_per_label = {}  # Initialize IoU for the entire batch
     objects_info = {}  # Initialize IoU for the entire batch
     for label_name in label_mapping.values():
@@ -72,6 +73,8 @@ def mean_iou_validation(pred, labels, obj2label, dataset_type="semantickitti"):
         if dataset_type == "semantickitti":
             objects_info[obj_id]["class"] = label_mapping[obj2label[0][obj_id] & 0xFFFF]
         elif "nuScenes" in dataset_type:
+            objects_info[obj_id]["class"] = label_mapping[obj2label[0][obj_id] // 1000]
+        elif dataset_type == "KITTI360":
             objects_info[obj_id]["class"] = label_mapping[obj2label[0][obj_id] // 1000]
 
     for b in range(bs):
@@ -85,6 +88,8 @@ def mean_iou_validation(pred, labels, obj2label, dataset_type="semantickitti"):
             if dataset_type == "semantickitti":
                 original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] & 0xFFFF]
             elif "nuScenes" in dataset_type:
+                original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] // 1000]
+            elif dataset_type == "KITTI360":
                 original_label = label_mapping[obj2label[b][str(int(obj_id.item()))] // 1000]
             obj_iou = mean_iou_single(pred_sample == obj_id, labels_sample == obj_id)
             objects_info[str(int(obj_id.item()))]["miou"] = obj_iou.item()
@@ -554,8 +559,8 @@ def decode_cluster_ids(cluster_ids, prime1=9973, prime2=11):
 def get_label_mapping(dataset_type):
     if dataset_type == "semantickitti":
         label_mapping = {0: "unlabeled", 1: "car", 2: "bicycle", 3: "motorcycle", 4: "truck", 5: "other-vehicle", 6: "person", 7: "bicyclist", 8: "motorcyclist", 9: "road", 10: "parking", 11: "sidewalk", 12: "other-ground", 13: "building", 14: "fence", 15: "vegetation", 16: "trunk", 17: "terrain", 18: "pole", 19: "traffic-sign"}
-        things_labels = [1, 2, 3, 4, 5, 6, 7, 8]  # [1:car,  2:bicycle,  3:motorcycle,  4:truck,  5:other-vehicle,  6:person,  7:bicyclist,  8:motorcyclist ]
-        stuff_labels = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]  #  [9:road,  10:parking, 11:sidewalk ,12:other-ground ,13:building ,14:fence ,15:vegetation ,16:trunk ,17:terrain ,18:pole ,19:traffic-sign]
+        # things_labels = [1, 2, 3, 4, 5, 6, 7, 8]  # [1:car,  2:bicycle,  3:motorcycle,  4:truck,  5:other-vehicle,  6:person,  7:bicyclist,  8:motorcyclist ]
+        # stuff_labels = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]  #  [9:road,  10:parking, 11:sidewalk ,12:other-ground ,13:building ,14:fence ,15:vegetation ,16:trunk ,17:terrain ,18:pole ,19:traffic-sign]
     elif dataset_type == "nuScenes_challenge":
         label_mapping = {
             0: "void / ignore",
@@ -576,9 +581,7 @@ def get_label_mapping(dataset_type):
             15: "manmade (stuff)",
             16: "vegetation (stuff)",
         }
-        things_labels = [9, 14, 15, 16, 17, 18, 21, 2, 3, 4, 6, 12, 22, 23]
-        stuff_labels = [24, 25, 26, 27, 28, 30]
-        ignore_labels = [1, 5, 7, 8, 10, 11, 13, 19, 20, 0, 29, 31]
+
     elif dataset_type == "nuScenes_general":
         label_mapping = {
             0: "noise",
@@ -614,15 +617,18 @@ def get_label_mapping(dataset_type):
             30: "static.vegetation",
             31: "vehicle.ego",
         }
-        things_labels = []
-        stuff_labels = []
-    return label_mapping, things_labels
+        # things_labels = [9, 14, 15, 16, 17, 18, 21, 2, 3, 4, 6, 12, 22, 23]
+        # stuff_labels = [24, 25, 26, 27, 28, 30]
+        # ignore_labels = [1, 5, 7, 8, 10, 11, 13, 19, 20, 0, 29, 31]
+    return label_mapping
 
 
 def get_class_name(dataset_type, obj2label, b, obj_id, label_mapping):
     if dataset_type == "semantickitti":
         original_label = label_mapping[obj2label[b][obj_id] & 0xFFFF]
     elif "nuScenes" in dataset_type:
+        original_label = label_mapping[obj2label[b][obj_id] // 1000]
+    if dataset_type == "KITTI360":
         original_label = label_mapping[obj2label[b][obj_id] // 1000]
     return original_label
 
@@ -680,7 +686,9 @@ def get_things_stuff_miou(dataset_type, class_IoU_weighted_results, label_mappin
             "vehicle.truck",
         }
         stuff_labels = {"flat.driveable_surface", "flat.other", "flat.sidewalk", "flat.terrain", "static.manmade", "static.other", "static.vegetation", "vehicle.ego"}
-
+    elif dataset_type == "KITTI360":
+        ignore_labels = {"unlabeled", "unknown construction", "unknown vehicle", "unknown object"}
+        thing_labels, stuff_labels = get_things_stuff_split_kitti360()
     clickformer_IoU_score = {}
     for click_of_interest in clicks_of_interest:
         clickformer_IoU_score[f"clickformer_miou_things@{click_of_interest}"] = []

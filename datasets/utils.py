@@ -58,8 +58,8 @@ class VoxelizeCollate:
         coordinates, features = ME.utils.sparse_collate(coordinates, features)
         # TODO: why do we need here then the time i.e. features are: [original_x, original_y, original_z , time, intensity, distance]
         raw_coordinates = features[:, :3]  # [original_x, original_y, original_z , time]
-        features = features[:, 4:]  # [intensity, distance]
-        # features = features[:, 3:]  # [intensity, distance] / [time, intensity, distance]
+        # features = features[:, 4:]  # [intensity, distance]
+        features = features[:, 3:]  # [time, intensity, distance]
         collated_data = generate_collated_data(
             mode=self.mode,
             scene_names=scene_names,

@@ -20,9 +20,11 @@ from utils.seg import mean_iou, mean_iou_validation, mean_iou_scene, cal_click_l
 from datasets.utils import VoxelizeCollate
 from datasets.lidar import LidarDataset
 from datasets.lidar_nuscenes import LidarDatasetNuscenes
+from datasets.lidar_kitti360 import LidarDataset_Kitti360
 from models import Interactive4D
 from models.criterion import SetCriterion
 from models.metrics.utils import IoU_at_numClicks, NumClicks_for_IoU, NumClicks_for_IoU_class, mIoU_per_class_metric, mIoU_metric, losses_metric
+from datasets.kitti360_info import label_name_mapping_kitti360
 
 
 class ObjectSegmentation(pl.LightningModule):
@@ -122,7 +124,7 @@ class ObjectSegmentation(pl.LightningModule):
                 31: "vehicle.ego",
             }
         elif self.config.general.dataset == "nuScenes_challenge":
-            label_mapping = {
+            self.label_mapping = {
                 0: "void / ignore",
                 1: "barrier (thing)",
                 2: "bicycle (thing)",
@@ -141,6 +143,9 @@ class ObjectSegmentation(pl.LightningModule):
                 15: "manmade (stuff)",
                 16: "vegetation (stuff)",
             }
+        elif self.config.general.dataset == "KITTI360":
+            self.label_mapping = label_name_mapping_kitti360
+
         # iou@K for each class
         self.iou_at_numClicks_class = {}
         for class_type in self.label_mapping.values():
@@ -198,11 +203,12 @@ class ObjectSegmentation(pl.LightningModule):
             labels=labels,
             click_idx=click_idx,
             click_time_idx=click_time_idx,
+            scan_numbers=data.F[:, 0],
         )
         self.interactive4d.train()
 
         #########  2. real forward pass  #########
-        outputs = self.interactive4d.forward_mask(pcd_features, aux, coordinates, pos_encodings_pcd, click_idx=click_idx, click_time_idx=click_time_idx)
+        outputs = self.interactive4d.forward_mask(pcd_features, aux, coordinates, pos_encodings_pcd, click_idx=click_idx, click_time_idx=click_time_idx, scan_numbers=data.F[:, 0])
 
         ######### 3. loss back propagation #########
         click_weights = cal_click_loss_weights(batch_indicators, raw_coords, torch.cat(labels), click_idx)
@@ -332,6 +338,7 @@ class ObjectSegmentation(pl.LightningModule):
                     pos_encodings_pcd,
                     click_idx=click_idx,
                     click_time_idx=click_time_idx,
+                    scan_numbers=data.F[:, 0],
                 )
                 pred_logits = outputs["pred_masks"]
                 pred = [p.argmax(-1) for p in pred_logits]
@@ -458,7 +465,7 @@ class ObjectSegmentation(pl.LightningModule):
 
             if current_num_clicks != 0:
                 # mean_iou here is calculated just with the points responsible for the quantized values!
-                general_miou, label_miou_dict, objects_info = mean_iou_validation(updated_pred, labels, obj2label, self.dataset_type)
+                general_miou, label_miou_dict, objects_info = mean_iou_validation(updated_pred, labels, obj2label, self.label_mapping, self.dataset_type)
 
                 label_miou_dict = {"validation/" + k: v for k, v in label_miou_dict.items()}
                 self.log("validation/quantized_mIoU", general_miou, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=True)
@@ -497,8 +504,8 @@ class ObjectSegmentation(pl.LightningModule):
                         next_iou_target_indices_obj[idx][sweep_number][obj_id] += 1
                 start_index = end_index
 
-        # if (batch_idx % self.config.general.visualization_frequency == 0) or (general_miou < 0.4):  # Condition for visualization logging
-        if False:  # Condition for visualization logging
+        if batch_idx % self.config.general.visualization_frequency == 0:  # Condition for visualization logging
+            # if False:  # Condition for visualization logging
             # choose a random scene to visualize from the batch
             chosen_scene_idx = random.randint(0, batch_size - 1)
             scene_name = scene_names[chosen_scene_idx][0]
@@ -516,8 +523,8 @@ class ObjectSegmentation(pl.LightningModule):
             if sample_iou < 0.4:
                 print("Logging visualization data for low mIoU scene")
             wandb.log({f"point_scene/ground_truth_ quantized_{scene_name}": gt_scene})
-            wandb.log({f"point_scene/ground_truth_full_{scene_name}": gt_full_scene})
-            wandb.log({f"point_scene/prediction_{scene_name}_full_sample_iou_{sample_iou:.2f}": pred_full_scene})
+            # wandb.log({f"point_scene/ground_truth_full_{scene_name}": gt_full_scene})
+            # wandb.log({f"point_scene/prediction_{scene_name}_full_sample_iou_{sample_iou:.2f}": pred_full_scene})
             wandb.log({f"point_scene/prediction_{scene_name}_quantized_iou_{general_miou:.2f}": pred_scene})
 
         # self.config.general.visualization_dir,
@@ -760,6 +767,20 @@ class ObjectSegmentation(pl.LightningModule):
                 center_coordinates=self.config.data.datasets.center_coordinates,
                 dataset_type=self.config.general.dataset,
             )
+        elif self.config.general.dataset == "KITTI360":
+            self.validation_dataset = LidarDataset_Kitti360(
+                data_dir=self.config.data.datasets.data_dir,
+                add_distance=self.config.data.datasets.add_distance,
+                sweep=self.config.data.datasets.sweep,
+                segment_full_scene=self.config.data.datasets.segment_full_scene,
+                obj_type=self.config.data.datasets.obj_type,
+                sample_choice=self.config.data.datasets.sample_choice_validation,
+                ignore_label=self.config.data.ignore_label,
+                mode="validation",
+                instance_population=0,  # self.config.data.datasets.instance_population
+                volume_augmentations_path=None,
+                center_coordinates=self.config.data.datasets.center_coordinates,
+            )
         # self.test_dataset = hydra.utils.instantiate(self.config.data.test_dataset)
 
     def train_dataloader(self):
@@ -789,6 +810,7 @@ class ObjectSegmentation(pl.LightningModule):
         labels,
         click_idx,
         click_time_idx,
+        scan_numbers=None,
     ):
         batch_size = batch_indicators.max() + 1
         current_num_iter = 0
@@ -812,6 +834,7 @@ class ObjectSegmentation(pl.LightningModule):
                         pos_encodings_pcd,
                         click_idx=click_idx,
                         click_time_idx=click_time_idx,
+                        scan_numbers=scan_numbers,
                     )
                     pred_logits = outputs["pred_masks"]
                     pred = [p.argmax(-1) for p in pred_logits]

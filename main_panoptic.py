@@ -156,8 +156,8 @@ def test(cfg: DictConfig):
 
 def main(running_on_julich=False):
     # Load the configuration from the YAML file
-    cfg = OmegaConf.load("config.yaml")
-    # cfg = OmegaConf.load("config_validation.yaml")
+    # cfg = OmegaConf.load("config.yaml")
+    cfg = OmegaConf.load("config_validation.yaml")
 
     if running_on_julich:
         cfg.data.datasets.data_dir = "/p/scratch/objectsegvideo/ilya/code/preprocessing"
