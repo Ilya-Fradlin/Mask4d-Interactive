@@ -30,3 +30,6 @@ if __name__ == "__main__":
     config.user_name = args.user_name
     config.point_type = args.point_type
     main(config)
+
+
+# python run_UI.py --user_name="Fradlin"

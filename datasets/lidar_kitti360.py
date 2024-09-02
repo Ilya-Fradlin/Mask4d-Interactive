@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 from random import choice, uniform, sample as random_sample, random
 
-from datasets.kitti360_info import map_labels_kitti360, is_thing_kitti360
+from datasets.kitti360_info import map_labels_kitti360, is_thing_kitti360, label2category
 
 
 class LidarDataset_Kitti360(Dataset):
@@ -37,7 +37,14 @@ class LidarDataset_Kitti360(Dataset):
         self.segment_full_scene = segment_full_scene
         self.obj_type = obj_type
         self.center_coordinates = center_coordinates
-        self.config = self._load_yaml("conf/semantic-kitti.yaml")
+
+        extrinsicName = "/nodes/anchorbrew/work/yilmaz/KITTI-360/calibration/" + "/calib_cam_to_velo.txt"
+        cam2poseName = "/nodes/anchorbrew/work/yilmaz/KITTI-360/calibration/" + "/calib_cam_to_pose.txt"
+        Tr_cam_velo, success = loadTransform(extrinsicName)
+        Tr_cam_pose, success = loadCamPose(cam2poseName)
+
+        self.Tr_velo_pose = Tr_cam_pose[0] @ np.linalg.inv(Tr_cam_velo)
+
         if sweep >= 1:
             self.drop_outliers = True
         else:
@@ -100,12 +107,15 @@ class LidarDataset_Kitti360(Dataset):
         for time, scan in enumerate(self.data[idx]):
             file_paths.append(scan["filepath"])
             # points = x , y, z, intensity, time, r, g, b
-            points = np.fromfile(scan["filepath"], dtype=np.float32).reshape(-1, 8)
+            # points = np.fromfile(scan["filepath"], dtype=np.float32).reshape(-1, 8)
+            points, features = read_bin_point_cloud_kitti360(scan["filepath"])
 
+            pose_matrix = np.array(scan["poses"])
+            velo_to_world = pose_matrix @ self.Tr_velo_pose
             coordinates = points[:, :3]
-            features = points[:, 3:4]  # intensity,
-            time_array = points[:, 4:5]  # time
-            colors = points[:, 5:8]  # RGB
+            coordinates = transform_points(coordinates, velo_to_world)
+
+            time_array = np.ones((features.shape[0], 1)) * time
             features = np.hstack((time_array, features))  # (time, intensity)
 
             # labels
@@ -114,17 +124,12 @@ class LidarDataset_Kitti360(Dataset):
                 obj2label_maps_list.append({})
             else:
                 # Convert the panoptic labels into object labels
-                labels, obj2label_map, click_idx, max_instance_id, label2obj_map = self.generate_object_labels(scan, max_instance_id, label2obj_map, obj2label_map, click_idx)
+                labels, obj2label_map, click_idx, max_instance_id, label2obj_map, mask = self.generate_object_labels(scan, max_instance_id, label2obj_map, obj2label_map, click_idx)
                 obj2label_maps_list.append(obj2label_map)
                 unique_labels = np.unique(labels)
                 unique_labels = unique_labels[unique_labels != 0]
                 num_obj_in_scene.append(len(unique_labels))
 
-            if self.drop_outliers:
-                # Create a boolean mask where labels are not 0
-                mask = labels != 0
-                # Apply the mask to each array
-                labels = labels[mask]
                 coordinates = coordinates[mask]
                 features = features[mask]
 
@@ -177,73 +182,74 @@ class LidarDataset_Kitti360(Dataset):
         semantic_labels = panoptic_labels // 1000
         instance_labels = panoptic_labels % 1000
         """
-        panoptic_labels = np.fromfile(scan["label_filepath"], dtype=np.uint32)
+        panoptic_labels = np.fromfile(scan["label_filepath"], dtype=np.int64)
         current_max_instance_id = np.amax(panoptic_labels % 1000)
         if current_max_instance_id > max_instance_id:
             max_instance_id = current_max_instance_id
 
         instance_labels = panoptic_labels % 1000
-        # Extract and update semantic labels
         semantic_labels = panoptic_labels // 1000
 
-        # updated_semantic_labels = np.vectorize(map_labels_kitti360)(semantic_labels)
-        # updated_semantic_labels = np.vectorize(self.config["learning_map"].__getitem__)(semantic_labels)
+        # Create a boolean mask where labels are not 0
+        mask = np.logical_and(np.logical_and(semantic_labels != -1, semantic_labels != 44), np.logical_and(semantic_labels != 43, semantic_labels != 42))
+        mask = np.logical_and(mask, semantic_labels != 0)
 
+        # Apply the mask to each array
+        # Iterate over each label
+        for i in range(len(semantic_labels)):
+            # Get the category for the current semantic label
+            category = label2category.get(semantic_labels[i], None)
+
+            # Check if the category is neither "vehicle" nor "human"
+            if category not in ["vehicle", "human"]:
+                # Set the instance ID to 0 if the category is not "vehicle" or "human"
+                instance_labels[i] = 0
+
+        instance_labels = instance_labels[mask]
+        semantic_labels = semantic_labels[mask]
+        assert 0 == sum(semantic_labels == 0) + sum(semantic_labels == 42) + sum(semantic_labels == 43) + sum(semantic_labels == 44)
         panoptic_labels = semantic_labels * 1000 + instance_labels
 
-        if "validation" in self.mode and not self.segment_full_scene:
-            if self.obj_type != "all":
-                # we need to keep only the things or only the stuff
-                scan["clicks"], scan["obj"] = self.select_only_desired_objects_subsampled(self.obj_type, scan["obj"], scan["clicks"])
-            obj_labels = np.zeros(panoptic_labels.shape)
-            for obj_idx, label in scan["obj"].items():
+        # no pre-defined object selected, choose random objects
+        obj_labels = np.zeros(panoptic_labels.shape)
+        # unique_panoptic_labels = scan["unique_panoptic_labels"]
+        unique_panoptic_labels = list(np.unique(panoptic_labels))
+        if self.obj_type != "all":
+            unique_panoptic_labels = self.select_only_desired_objects(self.obj_type, unique_panoptic_labels)
+
+        max_num_obj = len(unique_panoptic_labels)
+        if self.segment_full_scene:
+            num_obj = max_num_obj
+        else:
+            num_obj = np.random.randint(1, min(10, max_num_obj) + 1)
+        chosen_objects = random_sample(unique_panoptic_labels, num_obj)
+
+        if label2obj_map == {}:
+            # This is the first scene we are generating object labels
+            for obj_idx, label in enumerate(chosen_objects):
+                obj_idx += 1  # 0 is background
                 obj_labels[panoptic_labels == label] = int(obj_idx)
                 obj2label_map[str(int(obj_idx))] = int(label)
-            click_idx = scan["clicks"]
-
-        elif ("train" in self.mode) or ("validation" in self.mode and self.segment_full_scene):
-            # no pre-defined object selected, choose random objects
-            obj_labels = np.zeros(panoptic_labels.shape)
-            unique_panoptic_labels = scan["unique_panoptic_labels"]
-            if self.obj_type != "all":
-                unique_panoptic_labels = self.select_only_desired_objects(self.obj_type, unique_panoptic_labels)
-
-            max_num_obj = len(unique_panoptic_labels)
-            if self.segment_full_scene:
-                num_obj = max_num_obj
-            else:
-                num_obj = np.random.randint(1, min(10, max_num_obj) + 1)
-            chosen_objects = random_sample(unique_panoptic_labels, num_obj)
-
-            if label2obj_map == {}:
-                # This is the first scene we are generating object labels
-                for obj_idx, label in enumerate(chosen_objects):
-                    obj_idx += 1  # 0 is background
-                    obj_labels[panoptic_labels == label] = int(obj_idx)
-                    obj2label_map[str(int(obj_idx))] = int(label)
-                    label2obj_map[label] = int(obj_idx)
-                    click_idx[str(obj_idx)] = []
-                # Background
-                click_idx["0"] = []
-            else:
-                # We have already generated object labels for previous scene in the sweep, now need to update for new object
-                current_obj_idx = max(label2obj_map.values()) + 1  # In case there are new objects in the scene, add them as the following index
-                for label in chosen_objects:
-                    if label in label2obj_map.keys():
-                        defined_obj_id = label2obj_map[label]
-                        obj_labels[panoptic_labels == label] = int(defined_obj_id)
-                    else:
-                        # a new obj is introduced
-                        obj2label_map[str(int(current_obj_idx))] = int(label)
-                        label2obj_map[label] = int(current_obj_idx)
-                        obj_labels[panoptic_labels == label] = int(current_obj_idx)
-                        click_idx[str(current_obj_idx)] = []
-                        current_obj_idx += 1
-
+                label2obj_map[label] = int(obj_idx)
+                click_idx[str(obj_idx)] = []
+            # Background
+            click_idx["0"] = []
         else:
-            raise ValueError(f"{self.mode} should not be used generate_object_labels")
+            # We have already generated object labels for previous scene in the sweep, now need to update for new object
+            current_obj_idx = max(label2obj_map.values()) + 1  # In case there are new objects in the scene, add them as the following index
+            for label in chosen_objects:
+                if label in label2obj_map.keys():
+                    defined_obj_id = label2obj_map[label]
+                    obj_labels[panoptic_labels == label] = int(defined_obj_id)
+                else:
+                    # a new obj is introduced
+                    obj2label_map[str(int(current_obj_idx))] = int(label)
+                    label2obj_map[label] = int(current_obj_idx)
+                    obj_labels[panoptic_labels == label] = int(current_obj_idx)
+                    click_idx[str(current_obj_idx)] = []
+                    current_obj_idx += 1
 
-        return obj_labels, obj2label_map, click_idx, max_instance_id, label2obj_map
+        return obj_labels, obj2label_map, click_idx, max_instance_id, label2obj_map, mask
 
     def select_only_desired_objects(self, obj_type, unique_panoptic_labels):
         things_targets = [1, 2, 3, 4, 5, 6, 7, 8]  # [1:car,  2:bicycle,  3:motorcycle,  4:truck,  5:other-vehicle,  6:person,  7:bicyclist,  8:motorcyclist ]
@@ -314,3 +320,66 @@ class LidarDataset_Kitti360(Dataset):
                 label_info[k] = count
                 count += 1
         return label_info
+
+
+def read_bin_point_cloud_kitti360(file_path):
+    """
+    Loads a .bin file containing the lidarseg or lidar panoptic labels.
+    :param bin_path: Path to the .bin file.
+    :param type: semantic type, 'lidarseg': stored in 8-bit format, 'panoptic': store in 32-bit format.
+    :return: An array containing the labels, with dtype of np.uint8 for lidarseg and np.int32 for panoptic.
+    """
+    scan = np.fromfile(file_path, dtype=np.float32)
+    scan = scan.reshape((-1, 4))  # The point cloud data is stored in a Nx4 format (x, y, z, intensity)
+    points = scan[:, :3]  # Extracting the (x, y, z) coordinates
+    features = scan[:, 3:4]  # Extracting the intensity values
+    return points, features
+
+
+def loadTransform(filename):
+
+    transform = np.eye(4)
+
+    try:
+        infile = open(filename).readline().rstrip("\n").split(" ")
+    except:
+        print("Failed to open transforms " + filename)
+        return transform, False
+
+    for i in range(12):
+        xi = i // 4
+        yi = i % 4
+        transform[xi, yi] = float(infile[i])
+
+    return transform, True
+
+
+def transform_points(points, pose):
+    # Convert points to homogeneous coordinates (Nx4)
+
+    points = points @ pose[:3, :3].T + pose[:3, 3]
+    return points
+
+
+def loadCamPose(filename):
+    poses = [None for _ in range(4)]
+
+    try:
+        infile = open(filename)
+    except:
+        print("Failed to open camera poses " + filename)
+        return poses, False
+
+    for line in infile:
+        lineProcessed = line.rstrip("\n").split(" ")
+        if any("image_0" in x for x in lineProcessed):
+            transform = np.eye(4)
+            index = int(lineProcessed[0][7])
+            for i in range(12):
+                xi = i // 4
+                yi = i % 4
+                transform[xi, yi] = float(lineProcessed[i + 1])
+            poses[index] = transform
+
+    infile.close()
+    return poses, True

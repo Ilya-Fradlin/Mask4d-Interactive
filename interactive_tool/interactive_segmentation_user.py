@@ -60,7 +60,7 @@ class UserInteractiveSegmentationModel(abc.ABC):
             else:
                 self.click_idx = click_idx
 
-                outputs = self.model.forward_mask(self.pcd_features, self.aux, self.coordinates, self.pos_encodings_pcd, click_idx=[self.click_idx], click_time_idx=[click_time_idx])
+                outputs = self.model.forward_mask(self.pcd_features, self.aux, self.coordinates, self.pos_encodings_pcd, click_idx=[self.click_idx], click_time_idx=[click_time_idx], scan_numbers=self.scan_numbers)
 
                 pred = outputs["pred_masks"][0].argmax(1)
 
@@ -71,7 +71,7 @@ class UserInteractiveSegmentationModel(abc.ABC):
                 self.object_mask[:, 0] = pred_full.cpu().numpy()
 
                 if gt_labels is not None:
-                    sample_iou, _ = mean_iou_scene(pred_full, gt_labels)
+                    sample_iou, iou_dict = mean_iou_scene(pred_full, gt_labels)
                     sample_iou = str(round(sample_iou.tolist() * 100, 1))
                 else:
                     sample_iou = "NA"
@@ -90,6 +90,9 @@ class UserInteractiveSegmentationModel(abc.ABC):
                 np.save(os.path.join(self.click_folder, "click_" + str(round(num_click / num_obj, 1)) + "_" + sample_iou), {"click_idx": click_idx, "click_time": click_time_idx})
 
                 print(line)
+                for obj_id, iou in iou_dict.items():
+                    print(f"Object {obj_id}: {iou}", end=", ")
+                print("\n")
 
         # update gui and save new object mask
         self.visualizer.update_colors(colors=self.get_colors(reload_masks=False))  # self.object_mask is already up to date
@@ -166,6 +169,7 @@ class UserInteractiveSegmentationModel(abc.ABC):
         ### compute backbone features
         data = ME.SparseTensor(coordinates=ME.utils.batched_coordinates([self.coords_qv]), features=self.features_qv, device=self.device)
         self.pcd_features, self.aux, self.coordinates, self.pos_encodings_pcd = self.model.forward_backbone(data, raw_coordinates=self.raw_coords_qv)
+        self.scan_numbers = data.F[:, 0]
 
         ### show UI
         self.visualizer = InteractiveSegmentationGUI(self)
@@ -237,6 +241,7 @@ class UserInteractiveSegmentationModel(abc.ABC):
         ### compute backbone features
         data = ME.SparseTensor(coordinates=ME.utils.batched_coordinates([self.coords_qv]), features=self.features_qv, device=self.device)
         self.pcd_features, self.aux, self.coordinates, self.pos_encodings_pcd = self.model.forward_backbone(data, raw_coordinates=self.raw_coords_qv)
+        self.scan_numbers = data.F[:, 0]
 
         if len(objects) != 0:  # init current object to the first one if there are already objects in the data set
             self.object_name = objects[0]

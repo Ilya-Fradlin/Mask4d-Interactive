@@ -3,7 +3,7 @@ general:
   gpus: null
   seed: 42
   project_name: Mask4D-Interactive
-  dataset: semantickitti # semantickitti / nuScenes
+  dataset: semantickitti # semantickitti / nuScenes / KITTI360
   workspace: Ilyafr97
   dbscan_eps: null
   experiment_name: now-Interactive4d # now-obj_type_${data.datasets.obj_type}-obj_count_${data.datasets.sample_choice_train}-max${general.max_num_clicks}clicks-limit10
@@ -51,7 +51,7 @@ data:
     num_workers: 1 # 4
     batch_size: 1 # 4
     test_batch_size: 1
-    voxel_size: 0.05
+    voxel_size: 0.1
 
 optimizer:
   lr: 0.0002

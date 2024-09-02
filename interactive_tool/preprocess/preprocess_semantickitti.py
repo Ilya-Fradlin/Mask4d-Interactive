@@ -17,8 +17,9 @@ def generate_object_labels(label_filepath, max_instance_id, label2obj_map, obj2l
     # Update semantic labels
     panoptic_labels &= np.array(~0xFFFF).astype(np.uint32)  # Clear lower 16 bits
     panoptic_labels |= updated_semantic_labels.astype(np.uint32)  # Set lower 16 bits with updated semantic labels
-    # drop outlier points
-    mask = panoptic_labels != 0
+    # drop outlier points and label 14 (fence)
+    mask = np.logical_and(panoptic_labels != 14, panoptic_labels != 0)
+
     panoptic_labels = panoptic_labels[mask]
     obj_labels = np.zeros(panoptic_labels.shape)
     unique_panoptic_labels = np.unique(panoptic_labels)
@@ -170,5 +171,5 @@ for scan in low_object_scans:
         yaml.dump(obj2label_map, file)
 
     field_names = ["x", "y", "z", "red", "green", "blue", "time", "intensity", "distance", "label"]
-    ply_path = os.path.join(dir_path, f"scan_{scan}.ply")
+    ply_path = os.path.join(dir_path, f"scan.ply")
     write_ply(ply_path, [coordinates, colors, features, labels], field_names)

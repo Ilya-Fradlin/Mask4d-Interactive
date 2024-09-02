@@ -91,28 +91,12 @@ class InteractiveSegmentationGUI:
         self.prev_next_widget.add_child(self.previous_scene_button)
         self.prev_next_widget.add_stretch()
         self.prev_next_widget.add_child(self.next_scene_button)
+
         # save and quit
         self.save_and_quit_button = gui.Button("Save and Quit")
         self.save_and_quit_button.horizontal_padding_em = 0.5
         self.save_and_quit_button.vertical_padding_em = 0.5
         self.save_and_quit_button.set_on_clicked(self.__save_and_quit)
-        # add everything to the widget on the right side
-        self.right_side = gui.Vert(0, gui.Margins(self.em, self.em, self.em, self.em))
-        self.right_side.add_child(user_guide)
-        self.right_side.add_fixed(self.separation_height)
-        self.right_side.add_child(self.auto_checkbox)
-        self.right_side.add_fixed(self.separation_height)
-        self.right_side.add_child(self.objects_widget)
-        self.right_side.add_fixed(self.separation_height)
-        self.right_side.add_child(self.click_info)
-
-        self.right_side.add_fixed(self.separation_height)
-        self.right_side.add_stretch()
-        self.right_side.add_fixed(self.separation_height * 1)
-        self.right_side.add_child(self.run_seg_button)
-        self.right_side.add_fixed(self.separation_height * 1)
-        self.right_side.add_child(self.prev_next_widget)
-        self.right_side.add_fixed(self.separation_height)
 
         #### left side of visualization (point cloud aka scene) ####
         self.widget3d = gui.SceneWidget()
@@ -127,6 +111,36 @@ class InteractiveSegmentationGUI:
         self.info_coordinate_label = gui.Label(f"Scene Name: {self.curr_scene_name}")
         self.info_coordinate_label.visible = True
 
+        # Point size slider
+        self.slider_widget = gui.Horiz(0, zero_margin)
+        self.point_size_slider = gui.Slider(gui.Slider.INT)  # Create a slider with integer values
+        self.point_size_slider.set_limits(1, 15)  # Set the range of the slider (min=1, max=20)
+        self.point_size_slider.int_value = int(self.material_record.point_size)  # Set the initial value to the current point size
+        self.point_size_slider.set_on_value_changed(self.__slider_change)  # Connect the slider to the callback function
+        self.slider_widget.add_child(self.point_size_slider)
+
+        # add everything to the widget on the right side
+        self.right_side = gui.Vert(0, gui.Margins(self.em, self.em, self.em, self.em))
+        self.right_side.add_child(user_guide)
+        self.right_side.add_fixed(self.separation_height)
+        self.right_side.add_child(self.auto_checkbox)
+        self.right_side.add_fixed(self.separation_height)
+        self.right_side.add_child(self.objects_widget)
+        self.right_side.add_fixed(self.separation_height)
+        self.right_side.add_child(self.click_info)
+
+        self.right_side.add_fixed(self.separation_height)
+        self.right_side.add_stretch()
+
+        self.right_side.add_fixed(self.separation_height * 1)
+        self.right_side.add_child(self.slider_widget)
+
+        self.right_side.add_fixed(self.separation_height * 1)
+        self.right_side.add_child(self.run_seg_button)
+        self.right_side.add_fixed(self.separation_height * 1)
+        self.right_side.add_child(self.prev_next_widget)
+        self.right_side.add_fixed(self.separation_height)
+
         #### put together Window ####
         self.window.add_child(self.info_coordinate_label)
         self.window.set_on_layout(self.__on_layout)
@@ -137,6 +151,8 @@ class InteractiveSegmentationGUI:
 
         # if the user scrolls out too far with point clouds, we have to stop th epoints from getting too small
         self.scrolling_beyond = 0
+        self.scrolling_over = 0
+        self.scrolling_under = 0
 
         ### register text entries on server
         o3d.visualization.webrtc_server.register_data_channel_message_callback("visualization/gui/TextEdit", self.__set_textfield)
@@ -175,9 +191,11 @@ class InteractiveSegmentationGUI:
         self.model.load_next_scene(quit=False, previous=True)
 
     def __slider_change(self, slider_value):
-        """Slider for changing the segmentation cube around a click was changed"""
-        self.model.set_slider(slider_value)
-        self.cube_size = slider_value
+        """Slider for changing the points size"""
+        # self.model.set_slider(slider_value)
+        self.material_record.point_size = slider_value
+        gui.Application.instance.post_to_main_thread(self.window, self.__update_pc_size)
+        # self.cube_size = slider_value
 
     def __save_and_quit(self):
         """Button "Save and Quit" pressed by User"""
@@ -210,12 +228,14 @@ class InteractiveSegmentationGUI:
         """Callback for User Mouse Events"""
         if event.type == gui.MouseEvent.WHEEL:
             # scroll automatically adapts size of point cloud, but stays within a threshold so the points don't vanish
+            # event.wheel_dy = -1 for zooming in, 1 for zooming out
             if self.material_record.point_size <= self.window.scaling * 2.5 and event.wheel_dy >= 0:
                 self.scrolling_beyond += event.wheel_dy
             elif self.material_record.point_size <= self.window.scaling * 2.5 and self.scrolling_beyond > 0:
                 self.scrolling_beyond += event.wheel_dy
             else:
                 self.material_record.point_size -= 0.7 * event.wheel_dy  # linear change, TODO: make consistent (issue opened)
+                self.point_size_slider.int_value = int(self.material_record.point_size)
             gui.Application.instance.post_to_main_thread(self.window, self.__update_pc_size)
             return gui.Widget.EventCallbackResult.HANDLED
 
@@ -230,6 +250,54 @@ class InteractiveSegmentationGUI:
         else:
             return gui.Widget.EventCallbackResult.IGNORED
 
+        # def __mouse_event(self, event):
+        #     """Callback for User Mouse Events"""
+        #     # scroll automatically adapts size of point cloud, but stays within a threshold so the points don't vanish or explode
+        #     # event.wheel_dy = -1 for zooming in, 1 for zooming out
+
+        #     if event.type == gui.MouseEvent.WHEEL:
+        #         min_size = 3
+        #         max_size = 10
+        #         new_size = self.material_record.point_size - 0.5 * event.wheel_dy
+        #         ########## try to zoom in ############
+        #         if event.wheel_dy < 0:  # Zoom in
+        #             if self.scrolling_under > 0:
+        #                 self.scrolling_under -= 1
+        #             else:
+        #                 if self.material_record.point_size < max_size:
+        #                     self.material_record.point_size = new_size
+        #                 else:
+        #                     # we are already in the maximum size, stopping + remembering how many times we scrolled over
+        #                     self.material_record.point_size = max_size
+        #                     self.scrolling_over += 1
+
+        #         ########## try to zoom out ############
+        #         elif event.wheel_dy >= 0:  # Zoom out, make points smaller
+        #             if self.scrolling_over > 0:
+        #                 self.scrolling_over -= 1
+        #             else:
+        #                 if self.material_record.point_size > min_size:
+        #                     self.material_record.point_size = new_size
+        #                 else:
+        #                     # we are already in the maximum size, stopping + remembering how many times we scrolled over
+        #                     self.material_record.point_size = min_size
+        #                     self.scrolling_under += 1
+        #         else:
+        #             raise ValueError("Unexpected event.wheel_dy value")
+        #         gui.Application.instance.post_to_main_thread(self.window, self.__update_pc_size)
+        #         return gui.Widget.EventCallbackResult.HANDLED
+
+        #     if event.type == gui.MouseEvent.Type.BUTTON_DOWN and (event.is_modifier_down(gui.KeyModifier.CTRL) or self.cur_obj_idx != -1):
+        #         if not self.vis_mode_semantics:
+        #             self.window.show_message_box("Toggle Object Colors/Semantics", "Please untoggle the scene color with Key <o> first!")
+        #             return gui.Widget.EventCallbackResult.HANDLED
+        #         else:
+        #             self.mouse_event = event
+        #             self.widget3d.scene.scene.render_to_depth_image(self.__point_clicked_event)
+        #             return gui.Widget.EventCallbackResult.HANDLED
+        #     else:
+        #         return gui.Widget.EventCallbackResult.IGNORED
+
     def __point_clicked_event(self, depth_image):
         """called by "__mouse_event", extracts coordinate from event and updates color according to semantic"""
         # Coordinates are expressed in absolute coordinates of the
@@ -242,19 +310,43 @@ class InteractiveSegmentationGUI:
         # Note that np.asarray() reverses the axes.
         depth = np.asarray(depth_image)[y, x]
 
-        if depth == 1.0:  # clicked on nothing
+        if depth == 1.0 and not gui.MouseEvent.Type.BUTTON_DOWN:  # clicked on nothing with no key pressed
             self.info_coordinate_text = ""
         else:
-            point = self.widget3d.scene.camera.unproject(self.mouse_event.x, self.mouse_event.y, depth, self.widget3d.frame.width, self.widget3d.frame.height)
-            point = [point[0], point[1], point[2]]
+            if depth == 1.0 and gui.MouseEvent.Type.BUTTON_DOWN:  # clicked on nothing
+                # Find the closest point in the 3D scene
+                closest_x, closest_y, closest_depth = self.__find_nearest_valid_depth(x, y, depth_image)
+                # If no valid depth is found, exit the function
+                if closest_depth is None:
+                    self.info_coordinate_text = ""
+                    return
+                # Use the closest valid depth to unproject
+                depth = closest_depth
+                x = closest_x
+                y = closest_y
+                # Unproject using the found or original depth
+                point = self.widget3d.scene.camera.unproject(x, y, depth, self.widget3d.frame.width, self.widget3d.frame.height)
+                point = [point[0], point[1], point[2]]
+            # an exact point was clicked
+            else:
+                point = self.widget3d.scene.camera.unproject(self.mouse_event.x, self.mouse_event.y, depth, self.widget3d.frame.width, self.widget3d.frame.height)
+                point = [point[0], point[1], point[2]]
 
             point_idx = find_nearest(self.coordinates_qv, point)
             click_position = self.ori_coords[find_nearest(self.ori_coords, point)].cpu().tolist()
-
             segmentation_cube_mask = np.zeros([np.shape(self.coordinates)[0]], dtype=bool)
             segmentation_cube_mask[np.logical_and(np.logical_and((np.absolute(self.coordinates[:, 0] - point[0]) < self.cube_size), (np.absolute(self.coordinates[:, 1] - point[1]) < self.cube_size)), (np.absolute(self.coordinates[:, 2] - point[2]) < self.cube_size))] = True
-            if segmentation_cube_mask.sum() <= 0:  # no point clicked
-                return
+
+            new_cube_size = self.cube_size
+            while segmentation_cube_mask.sum() <= 0:  # no point clicked
+                new_cube_size = new_cube_size + 0.01
+                segmentation_cube_mask[np.logical_and(np.logical_and((np.absolute(self.coordinates[:, 0] - point[0]) < new_cube_size), (np.absolute(self.coordinates[:, 1] - point[1]) < new_cube_size)), (np.absolute(self.coordinates[:, 2] - point[2]) < new_cube_size))] = True
+            if segmentation_cube_mask.sum() > 1:  # no point clicked
+                # randomly leave only one True value in the mask
+                true_indices = np.where(segmentation_cube_mask)[0]
+                random_index = np.random.choice(true_indices)
+                segmentation_cube_mask[:] = False  # Set all to False
+                segmentation_cube_mask[random_index] = True  # Only keep the randomly selected index True
             if self.mouse_event.is_modifier_down(gui.KeyModifier.SHIFT) and self.mouse_event.is_modifier_down(gui.KeyModifier.CTRL):
                 # unselect point via SHIFT and Ctrl
                 self.info_coordinate_text = "Unselected coordinate ({:.3f}, {:.3f}, {:.3f})".format(point[0], point[1], point[2])
@@ -309,6 +401,28 @@ class InteractiveSegmentationGUI:
 
         # post to main thread
         gui.Application.instance.post_to_main_thread(self.window, self.__update_colors)
+
+    def __find_nearest_valid_depth(self, x, y, depth_image, max_search_radius=5000):
+        """
+        Finds the nearest pixel with a valid depth (depth != 1.0) within a given radius.
+        Returns the x, y coordinates of the closest valid pixel and its depth.
+        """
+        depth_array = np.asarray(depth_image)
+        height, width = depth_array.shape
+
+        for radius in range(1, max_search_radius + 1):
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    nx = x + dx
+                    ny = y + dy
+
+                    if 0 <= nx < width and 0 <= ny < height:
+                        depth = depth_array[ny, nx]
+                        if depth != 1.0:  # Found a valid depth
+                            return nx, ny, depth
+
+        # If no valid depth is found within the search radius, return None
+        return None, None, None
 
     def __set_textfield(self, new_object_name):
         self.new_object_name = new_object_name

@@ -199,6 +199,8 @@ class Interactive4D(nn.Module):
             fg_query_pos = self.pos_enc(fg_clicks_coords.float(), input_range=[mins, maxs])
 
             fg_clicks_time_idx = list(itertools.chain.from_iterable([click_time_idx_sample[str(i)] for i in range(1, fg_obj_num + 1)]))
+            # clip the time index to 1999
+            fg_clicks_time_idx = [1999 if x >= 2000 else x for x in fg_clicks_time_idx]
             fg_query_time = self.time_encode[fg_clicks_time_idx].T.unsqueeze(0).to(fg_query_pos.device)
 
             # generate obj_id embeddings

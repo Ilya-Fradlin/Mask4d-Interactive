@@ -6,64 +6,62 @@ import json
 from ply import *
 
 
-def generate_object_labels(label_filepath, max_instance_id, label2obj_map, obj2label_map, click_idx):
-    panoptic_labels = np.fromfile(label_filepath, dtype=np.uint32)
-    current_max_instance_id = np.amax(panoptic_labels >> 16)
-    if current_max_instance_id > max_instance_id:
-        max_instance_id = current_max_instance_id
-    # Extract semantic labels
-    semantic_labels = panoptic_labels & 0xFFFF
+def load_point_cloud(scan_path):
+    scan = np.fromfile(scan_path, dtype=np.float32)
+    scan = scan.reshape((-1, 4))  # The point cloud data is stored in a Nx4 format (x, y, z, intensity)
+    points = scan[:, :3]  # Extracting the (x, y, z) coordinates
+    features = scan[:, 3].reshape(-1, 1)  # Extracting the intensity values
+    return points, features
+
+
+def load_labels(label_path):
+    labels = np.fromfile(label_path, dtype=np.uint32)  # Labels are stored as unsigned 32-bit integers
+    return labels
+
+
+def load_predictions(prediction_path):
+    predictions = np.fromfile(prediction_path, dtype=np.uint32)
+    return predictions
+
+
+def update_challenge_labels(panoptic_labels):
     learning_map = yaml.safe_load(open("/home/fradlin/Github/Mask4D-Interactive/conf/semantic-kitti.yaml"))["learning_map"]
+    # Extract category_id and instance_id
+    semantic_labels = panoptic_labels & 0xFFFF
     updated_semantic_labels = np.vectorize(learning_map.__getitem__)(semantic_labels)
-    # Update semantic labels
+    # Combine the new category_id and instance_id
     panoptic_labels &= np.array(~0xFFFF).astype(np.uint32)  # Clear lower 16 bits
     panoptic_labels |= updated_semantic_labels.astype(np.uint32)  # Set lower 16 bits with updated semantic labels
+
+    return panoptic_labels
+
+
+def drop_unneeded(combined_panoptic_labels):
+    # Drop the void / ignore class
+    mask = combined_panoptic_labels & 0xFFFF != 0
+    # Drop the barrier class
+    mask &= combined_panoptic_labels & 0xFFFF != 14
+    # drop car / truuk instances
+    # mask &= combined_panoptic_labels != 4020
+
+    # [4004, 4009, 4011, 4017, 4018, 4020, 4021, 4025, 8039, 10016, 10022, 10028, 11000, 15000]
+    len(np.unique(combined_panoptic_labels[mask]))
+    return mask
+
+
+def generate_object_labels(panoptic_labels):
     # drop outlier points
-    mask = panoptic_labels != 0
-    panoptic_labels = panoptic_labels[mask]
     obj_labels = np.zeros(panoptic_labels.shape)
     unique_panoptic_labels = np.unique(panoptic_labels)
     chosen_objects = unique_panoptic_labels
 
-    if label2obj_map == {}:
-        # This is the first scene we are generating object labels
-        for obj_idx, label in enumerate(chosen_objects):
-            obj_idx += 1  # 0 is background
-            obj_labels[panoptic_labels == label] = int(obj_idx)
-            obj2label_map[str(int(obj_idx))] = int(label)
-            label2obj_map[label] = int(obj_idx)
-            click_idx[str(obj_idx)] = []
-        # Background
-        click_idx["0"] = []
-    else:
-        # We have already generated object labels for previous scene in the sweep, now need to update for new object
-        current_obj_idx = max(label2obj_map.values()) + 1  # In case there are new objects in the scene, add them as the following index
-        for label in chosen_objects:
-            if label in label2obj_map.keys():
-                defined_obj_id = label2obj_map[label]
-                obj_labels[panoptic_labels == label] = int(defined_obj_id)
-            else:
-                # a new obj is introduced
-                obj2label_map[str(int(current_obj_idx))] = int(label)
-                label2obj_map[label] = int(current_obj_idx)
-                obj_labels[panoptic_labels == label] = int(current_obj_idx)
-                click_idx[str(current_obj_idx)] = []
-                current_obj_idx += 1
+    obj2label_map = {"1": 458759, "2": 17, "3": 15, "4": 18, "5": 17694721, "6": 16, "7": 458753, "8": 11, "9": 9, "10": 13}
+    # This is the first scene we are generating object labels
+    for obj_idx, label in obj2label_map.items():
+        obj_id = int(obj_idx)
+        obj_labels[panoptic_labels == label] = int(obj_id)
 
-    return obj_labels, obj2label_map, click_idx, max_instance_id, label2obj_map, mask
-
-
-def get_colors(labels, obj2label_map):
-    learning_map_inv = yaml.safe_load(open("/home/fradlin/Github/Mask4D-Interactive/conf/semantic-kitti.yaml"))["learning_map_inv"]
-    color_map = yaml.safe_load(open("/home/fradlin/Github/Mask4D-Interactive/conf/semantic-kitti.yaml"))["color_map"]
-    # update the color map with the learning map
-    color_map = {key: color_map[value] for key, value in learning_map_inv.items()}
-    colors = np.zeros((len(labels), 3), dtype=np.uint8)
-    for obj_idx, panoptic_label in obj2label_map.items():
-        semantic_lables = panoptic_label & 0xFFFF
-        colors[labels == int(obj_idx)] = color_map[semantic_lables]
-    # return colors / 255
-    return colors
+    return obj_labels, obj2label_map
 
 
 # low_object_scans = [236, 237, 238, 239, 243, 244, 246, 247, 248, 249, 250, 1567]
@@ -80,8 +78,16 @@ label2obj_map, obj2label_map, click_idx, max_instance_id = {}, {}, {}, 0
 
 val_json_path = "/home/fradlin/Github/Mask4D-Interactive/validation_list.json"
 
+
+val_json_path = "/nodes/veltins/work/fradlin/jsons/semantickitti_full_validation_list.json"
+
 with open(val_json_path, "r") as file:
     val_list = json.load(file)
+    low_object_scans = [236, 237, 238, 239]
+
+accumulated_point_cloud = []
+accumulated_panoptic_labels = []
+accumulated_features = []
 
 for time, scan in enumerate(low_object_scans):
     scan_name = str(scan).zfill(6)
@@ -89,32 +95,53 @@ for time, scan in enumerate(low_object_scans):
     scan_entry = val_list[val_key]
     scan_filepath = scan_entry["filepath"]
     label_filepath = scan_entry["label_filepath"]
-    pose = np.array(scan_entry["pose"]).T
-    points = np.fromfile(scan_filepath, dtype=np.float32).reshape(-1, 4)
-    coordinates = points[:, :3]
-    coordinates = coordinates @ pose[:3, :3] + pose[3, :3]
-    center_coordinate = coordinates.mean(0)
-    coordinates -= center_coordinate
 
-    features = points[:, 3:4]  # intensity
+    point_cloud, features = load_point_cloud(scan_filepath)
+    pose = np.array(scan_entry["pose"]).T
+    coordinates = point_cloud[:, :3]
+    coordinates = coordinates @ pose[:3, :3] + pose[3, :3]
+
+    labels = load_labels(label_filepath)
+
     time_array = np.ones((features.shape[0], 1)) * time
     features = np.hstack((time_array, features))  # (time, intensity)
-    features = np.hstack((features, np.linalg.norm(coordinates - center_coordinate, axis=1)[:, np.newaxis]))  #  now features include: (time, intensity, distance)
 
-    labels, obj2label_map, click_idx, max_instance_id, label2obj_map, mask = generate_object_labels(label_filepath, max_instance_id, label2obj_map, obj2label_map, click_idx)
-    coordinates = coordinates[mask]
-    features = features[mask]
+    accumulated_panoptic_labels.append(labels)
+    accumulated_point_cloud.append(coordinates)
+    accumulated_features.append(features)
 
-    labels_list.append(labels)
-    coordinates_list.append(coordinates)
-    features_list.append(features)
+# Concatenate point clouds and labels
+combined_point_cloud = np.vstack(accumulated_point_cloud)
+combined_point_cloud -= np.mean(combined_point_cloud, axis=0)
 
-coordinates = np.vstack(coordinates_list)
-coordinates -= coordinates.mean(0)
-features = np.vstack(features_list)
-labels = np.hstack(labels_list)
+combined_features = np.vstack(accumulated_features)
+center_coordinate = combined_point_cloud.mean(0)
+combined_features = np.hstack(
+    (
+        combined_features,
+        np.linalg.norm(combined_point_cloud - center_coordinate, axis=1)[:, np.newaxis],
+    )
+)  # now features include: (time, intensity, distance)
 
-colors = get_colors(labels, obj2label_map)
+combined_panoptic_labels = np.hstack(accumulated_panoptic_labels)
+
+# drop point more than 40m away
+mask = np.linalg.norm(combined_point_cloud, axis=1) < 30
+combined_point_cloud = combined_point_cloud[mask]
+combined_panoptic_labels = combined_panoptic_labels[mask]
+combined_features = combined_features[mask]
+#  Update the challenge labels
+combined_panoptic_labels = update_challenge_labels(combined_panoptic_labels)
+mask = drop_unneeded(combined_panoptic_labels)
+combined_panoptic_labels = combined_panoptic_labels[mask]
+combined_point_cloud = combined_point_cloud[mask]
+combined_features = combined_features[mask]
+
+obj_labels_numbered, obj2label_map = generate_object_labels(combined_panoptic_labels)
+
+obj_color = {1: [1, 211, 211], 2: [233, 138, 0], 3: [41, 207, 2], 4: [244, 0, 128], 5: [194, 193, 3], 6: [121, 59, 50], 7: [254, 180, 214], 8: [239, 1, 51], 9: [85, 85, 85], 10: [229, 14, 241]}
+colors = np.array([obj_color[obj_idx] for obj_idx in obj_labels_numbered]).astype(np.uint8)
+
 
 starting_scan = str(low_object_scans[0])
 ending_scan = str(low_object_scans[-1])
@@ -126,5 +153,5 @@ with open(os.path.join(dir_path, "obj2label.yaml"), "w") as file:
     yaml.dump(obj2label_map, file)
 
 field_names = ["x", "y", "z", "red", "green", "blue", "time", "intensity", "distance", "label"]
-ply_path = os.path.join(dir_path, f"scan_{scan}.ply")
-write_ply(ply_path, [coordinates, colors, features, labels], field_names)
+ply_path = os.path.join(dir_path, f"scan.ply")
+write_ply(ply_path, [combined_point_cloud, colors, combined_features, obj_labels_numbered], field_names)

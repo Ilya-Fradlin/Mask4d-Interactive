@@ -31,6 +31,11 @@ class ObjectSegmentation(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
+
+        # adjust clicks of interest according to the max number of clicks
+        clicks_of_interest = list(range(1, self.config.general.max_num_clicks + 1))
+        self.config.general.clicks_of_interest = clicks_of_interest
+
         # model
         self.interactive4d = Interactive4D(
             num_heads=8, num_decoders=3, num_levels=1, hidden_dim=128, dim_feedforward=1024, shared_decoder=False, num_bg_queries=10, dropout=0.0, pre_norm=False, aux=True, voxel_size=config.data.voxel_size, sample_sizes=[4000, 8000, 16000, 32000], use_objid_attention=config.general.use_objid_attention
@@ -447,17 +452,31 @@ class ObjectSegmentation(pl.LightningModule):
                     objects_info = get_objects_iou(pred, labels)
                 else:
                     objects_info = get_objects_iou(updated_pred, labels)
-                new_clicks, new_clicks_num, new_click_pos, new_click_time, cluster_dict = get_iou_based_simulated_clicks(
-                    sample_pred,
-                    sample_labels,
-                    sample_raw_coords,
-                    current_num_clicks,
-                    objects_info=objects_info[idx],
-                    current_click_idx=click_idx[idx],
-                    training=False,
-                    cluster_dict=cluster_dict,
-                    max_clicks_per_obj=self.config.general.max_clicks_per_obj,
-                )
+
+                if average_clicks_per_obj < 10:
+                    new_clicks, new_clicks_num, new_click_pos, new_click_time, cluster_dict = get_iou_based_simulated_clicks(
+                        sample_pred,
+                        sample_labels,
+                        sample_raw_coords,
+                        current_num_clicks,
+                        objects_info=objects_info[idx],
+                        current_click_idx=click_idx[idx],
+                        training=False,
+                        cluster_dict=cluster_dict,
+                        max_clicks_per_obj=self.config.general.max_clicks_per_obj,
+                    )
+                else:
+                    new_clicks, new_clicks_num, new_click_pos, new_click_time, cluster_dict = get_iou_based_simulated_clicks(
+                        sample_pred,
+                        sample_labels,
+                        sample_raw_coords,
+                        current_num_clicks,
+                        objects_info=objects_info[idx],
+                        current_click_idx=click_idx[idx],
+                        training=True,
+                        cluster_dict=cluster_dict,
+                        max_clicks_per_obj=self.config.general.max_clicks_per_obj,
+                    )
 
                 ### add new clicks ###
                 if new_clicks is not None:
@@ -473,7 +492,7 @@ class ObjectSegmentation(pl.LightningModule):
                 self.validation_metric_logger.update(mIoU_quantized=general_miou)
                 self.validation_metric_logger.update(loss=sum(loss_dict_reduced_scaled.values()), **loss_dict_reduced_scaled, **loss_dict_reduced_unscaled)
 
-            if current_num_clicks == 0:
+            if current_num_clicks == 0 or average_clicks_per_obj >= 10:
                 new_clicks_num = num_obj[idx]
             else:
                 new_clicks_num = 1
@@ -644,20 +663,36 @@ class ObjectSegmentation(pl.LightningModule):
                     "validation/Interactive_metrics/IoU_10": stats["IoU@10"],
                 }
             )
-            self.log_dict(
-                {
-                    "validation/Interactive_metrics/IoU_weighted_1": stats["IoU_weighted@1"],
-                    "validation/Interactive_metrics/IoU_weighted_2": stats["IoU_weighted@2"],
-                    "validation/Interactive_metrics/IoU_weighted_3": stats["IoU_weighted@3"],
-                    "validation/Interactive_metrics/IoU_weighted_4": stats["IoU_weighted@4"],
-                    "validation/Interactive_metrics/IoU_weighted_5": stats["IoU_weighted@5"],
-                    "validation/Interactive_metrics/IoU_weighted_6": stats["IoU_weighted@6"],
-                    "validation/Interactive_metrics/IoU_weighted_7": stats["IoU_weighted@7"],
-                    "validation/Interactive_metrics/IoU_weighted_8": stats["IoU_weighted@8"],
-                    "validation/Interactive_metrics/IoU_weighted_9": stats["IoU_weighted@9"],
-                    "validation/Interactive_metrics/IoU_weighted_10": stats["IoU_weighted@10"],
-                }
-            )
+            # Initialize a dictionary to store the metrics
+            metrics_to_log_iou_weighted = {}
+            # Iterate through the stats dictionary
+            for key, value in stats.items():
+                # Check if the key starts with "IoU_weighted@"
+                if key.startswith("IoU_weighted@"):
+                    # Extract the number from the key
+                    number = key.split("@")[1]
+                    # Create the new key for wandb
+                    new_key = f"validation/Interactive_metrics/IoU_weighted_{number}"
+                    # Add to the dictionary
+                    metrics_to_log_iou_weighted[new_key] = value
+
+            # Log the dictionary to wandb
+            print(metrics_to_log_iou_weighted)
+            self.log_dict(metrics_to_log_iou_weighted)
+            # self.log_dict(
+            #     {
+            #         "validation/Interactive_metrics/IoU_weighted_1": stats["IoU_weighted@1"],
+            #         "validation/Interactive_metrics/IoU_weighted_2": stats["IoU_weighted@2"],
+            #         "validation/Interactive_metrics/IoU_weighted_3": stats["IoU_weighted@3"],
+            #         "validation/Interactive_metrics/IoU_weighted_4": stats["IoU_weighted@4"],
+            #         "validation/Interactive_metrics/IoU_weighted_5": stats["IoU_weighted@5"],
+            #         "validation/Interactive_metrics/IoU_weighted_6": stats["IoU_weighted@6"],
+            #         "validation/Interactive_metrics/IoU_weighted_7": stats["IoU_weighted@7"],
+            #         "validation/Interactive_metrics/IoU_weighted_8": stats["IoU_weighted@8"],
+            #         "validation/Interactive_metrics/IoU_weighted_9": stats["IoU_weighted@9"],
+            #         "validation/Interactive_metrics/IoU_weighted_10": stats["IoU_weighted@10"],
+            #     }
+            # )
         else:
             self.log_dict(
                 {

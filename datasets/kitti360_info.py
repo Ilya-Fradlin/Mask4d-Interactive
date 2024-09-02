@@ -125,6 +125,7 @@ kittiId2label = {label.kittiId: label for label in labels_info}
 # IDs to colors
 id_to_color_map = {label.id: label.color for label in labels_info}
 # category to list of label objects
+label2category = {label.id: label.category for label in labels_info}
 category2labels = {}
 for label in labels_info:
     category = label.category
@@ -205,7 +206,7 @@ def get_things_stuff_split_kitti360():
 
     # Iterate over the labels_info to populate the sets
     for label in labels_info:
-        if label.hasInstances:
+        if label.category == "human" or label.category == "vehicle":
             thing_labels.add(label.name)
         else:
             stuff_labels.add(label.name)

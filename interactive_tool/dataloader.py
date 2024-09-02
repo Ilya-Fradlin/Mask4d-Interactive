@@ -70,10 +70,10 @@ class InteractiveDataLoader:
         os.makedirs(self.mask_folder, exist_ok=True)
         os.makedirs(self.click_folder, exist_ok=True)
 
-        if not os.path.exists(os.path.join(scene_dir, "label.ply")):
+        if not os.path.exists(os.path.join(scene_dir, "scan.ply")):
             self.labels_full_ori = None
         else:
-            point_cloud = read_ply(os.path.join(scene_dir, "label.ply"))
+            point_cloud = read_ply(os.path.join(scene_dir, "scan.ply"))
             self.labels_full_ori = point_cloud["label"].astype(np.int32)
 
         # with open(scene_3dpoints_file, 'rb') as f:
@@ -92,11 +92,10 @@ class InteractiveDataLoader:
         elif pcd_type == o3d.io.FileGeometry.CONTAINS_POINTS:
             self.point_type = "pointcloud"
             self.scene_3dpoints = o3d.io.read_point_cloud(scene_3dpoints_file)
-            if "KITTI360" not in name:  # Later change to exclude KITTI360
-                # Setting all colors to black (0, 0, 0)
-                num_points = len(self.scene_3dpoints.points)  # Get the number of points in the point cloud
-                black_colors = np.zeros((num_points, 3))  # Create an array of zeros with shape (num_points, 3)
-                self.scene_3dpoints.colors = o3d.utility.Vector3dVector(black_colors)  # Assign the black colors to the point cloud
+            # Setting all colors to black (0, 0, 0)
+            num_points = len(self.scene_3dpoints.points)  # Get the number of points in the point cloud
+            black_colors = np.zeros((num_points, 3))  # Create an array of zeros with shape (num_points, 3)
+            self.scene_3dpoints.colors = o3d.utility.Vector3dVector(black_colors)  # Assign the black colors to the point cloud
             # Accessing and combining the color channels
             self.scene_3dpoints_gt_masks_colors = np.stack((point_cloud["red"], point_cloud["green"], point_cloud["blue"]), axis=-1)
             # Accessing and combining other features
